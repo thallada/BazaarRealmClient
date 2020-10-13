@@ -22,3 +22,5 @@ Related projects:
 * [`BazaarRealmPlugin`](https://github.com/thallada/BazaarRealmPlugin): SKSE
   plugin for the mod that modifies data within the Skyrim game engine and calls
   the methods in this client
+* [`BazaarRealmMod`](https://github.com/thallada/BazaarRealmMod): Papyrus
+  scripts, ESP plugin, and all other resources for the mod
