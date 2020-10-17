@@ -1,6 +1,5 @@
 #![allow(non_snake_case)]
 #![feature(vec_into_raw_parts)]
-#![feature(unwind_attributes)]
 #[macro_use]
 extern crate lazy_static;
 
@@ -247,13 +246,19 @@ unsafe impl Sync for MerchRecord {}
 
 
 #[no_mangle]
-pub extern "C" fn init() {
-    info!("init called");
-    let mut log_dir = dirs::document_dir().expect("could not get Documents directory");
-    log_dir.push(Path::new(
-        r#"My Games\Skyrim Special Edition\SKSE\BazaarRealmClient.log"#,
-    ));
-    simple_logging::log_to_file(log_dir, LevelFilter::Info).unwrap();
+pub extern "C" fn init() -> bool {
+    match dirs::document_dir() {
+        Some(mut log_dir) => {
+            log_dir.push(Path::new(
+                r#"My Games\Skyrim Special Edition\SKSE\BazaarRealmClient.log"#,
+            ));
+            match simple_logging::log_to_file(log_dir, LevelFilter::Info) {
+                Ok(_) => true,
+                Err(_) => false
+            }
+        },
+        None => false
+    }
 }
 
 #[no_mangle]
@@ -317,7 +322,36 @@ pub extern "C" fn create_owner(
     info!("api_key: {:?}", api_key);
     info!("name: {:?}", name);
     info!("mod_version: {:?}", mod_version);
-    match create_owner_inner(&api_url, &api_key, &name, mod_version) {
+
+    fn inner(api_url: &str, api_key: &str, name: &str, mod_version: u32) -> Result<Owner> {
+        #[cfg(not(test))]
+        let url = Url::parse(api_url)?.join("v1/owners")?;
+        #[cfg(test)]
+        let url = &mockito::server_url();
+
+        let owner = Owner::from_game(name, api_key, mod_version);
+        info!("created owner from game: {:?}", &owner);
+        if let Some(api_key) = &owner.api_key {
+            let client = reqwest::blocking::Client::new();
+            let resp = client
+                .post(url)
+                .header("Api-Key", api_key.clone())
+                .json(&owner)
+                .send()?;
+            info!("create owner response from api: {:?}", &resp);
+            let bytes = resp.bytes()?;
+            let json: Owner = serde_json::from_slice(&bytes)?;
+            if let Some(id) = json.id {
+                let mut file = File::create(file_cache_dir(api_url)?.join(format!("owner_{}.json", id)))?;
+                file.write_all(&bytes.as_ref())?;
+            }
+            Ok(json)
+        } else {
+            Err(anyhow!("api-key not defined"))
+        }
+    }
+
+    match inner(&api_url, &api_key, &name, mod_version) {
         Ok(owner) => {
             info!("create_owner successful");
             if let Some(id) = owner.id {
@@ -330,34 +364,6 @@ pub extern "C" fn create_owner(
             error!("create_owner failed. {}", err);
             -1
         }
-    }
-}
-
-fn create_owner_inner(api_url: &str, api_key: &str, name: &str, mod_version: u32) -> Result<Owner> {
-    #[cfg(not(test))]
-    let url = Url::parse(api_url)?.join("v1/owners")?;
-    #[cfg(test)]
-    let url = &mockito::server_url();
-
-    let owner = Owner::from_game(name, api_key, mod_version);
-    info!("created owner from game: {:?}", &owner);
-    if let Some(api_key) = &owner.api_key {
-        let client = reqwest::blocking::Client::new();
-        let resp = client
-            .post(url)
-            .header("Api-Key", api_key.clone())
-            .json(&owner)
-            .send()?;
-        info!("create owner response from api: {:?}", &resp);
-        let bytes = resp.bytes()?;
-        let json: Owner = serde_json::from_slice(&bytes)?;
-        if let Some(id) = json.id {
-            let mut file = File::create(file_cache_dir(api_url)?.join(format!("owner_{}.json", id)))?;
-            file.write_all(&bytes.as_ref())?;
-        }
-        Ok(json)
-    } else {
-        Err(anyhow!("api-key not defined"))
     }
 }
 
@@ -382,7 +388,32 @@ pub extern "C" fn create_shop(
     info!("api_key: {:?}", api_key);
     info!("name: {:?}", name);
     info!("description: {:?}", description);
-    match create_shop_inner(&api_url, &api_key, &name, &description) {
+
+    fn inner(api_url: &str, api_key: &str, name: &str, description: &str) -> Result<Shop> {
+        #[cfg(not(test))]
+        let url = Url::parse(api_url)?.join("v1/shops")?;
+        #[cfg(test)]
+        let url = &mockito::server_url();
+
+        let shop = Shop::from_game(name, description);
+        info!("created shop from game: {:?}", &shop);
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .post(url)
+            .header("Api-Key", api_key)
+            .json(&shop)
+            .send()?;
+        info!("create shop response from api: {:?}", &resp);
+        let bytes = resp.bytes()?;
+        let json: Shop = serde_json::from_slice(&bytes)?;
+        if let Some(id) = json.id {
+            let mut file = File::create(file_cache_dir(api_url)?.join(format!("shop_{}.json", id)))?;
+            file.write_all(&bytes.as_ref())?;
+        }
+        Ok(json)
+    }
+
+    match inner(&api_url, &api_key, &name, &description) {
         Ok(shop) => {
             info!("create_shop successful");
             if let Some(id) = shop.id {
@@ -396,30 +427,6 @@ pub extern "C" fn create_shop(
             -1
         }
     }
-}
-
-fn create_shop_inner(api_url: &str, api_key: &str, name: &str, description: &str) -> Result<Shop> {
-    #[cfg(not(test))]
-    let url = Url::parse(api_url)?.join("v1/shops")?;
-    #[cfg(test)]
-    let url = &mockito::server_url();
-
-    let shop = Shop::from_game(name, description);
-    info!("created shop from game: {:?}", &shop);
-    let client = reqwest::blocking::Client::new();
-    let resp = client
-        .post(url)
-        .header("Api-Key", api_key)
-        .json(&shop)
-        .send()?;
-    info!("create shop response from api: {:?}", &resp);
-    let bytes = resp.bytes()?;
-    let json: Shop = serde_json::from_slice(&bytes)?;
-    if let Some(id) = json.id {
-        let mut file = File::create(file_cache_dir(api_url)?.join(format!("shop_{}.json", id)))?;
-        file.write_all(&bytes.as_ref())?;
-    }
-    Ok(json)
 }
 
 // Because C++ does not have Result, -1 means that the request was unsuccessful
@@ -442,7 +449,40 @@ pub extern "C" fn create_interior_ref_list(
         assert!(!ref_records.is_null());
         slice::from_raw_parts(ref_records, ref_records_len)
     };
-    match create_interior_ref_list_inner(&api_url, &api_key, shop_id, ref_records_slice) {
+
+    fn inner(
+        api_url: &str,
+        api_key: &str,
+        shop_id: i32,
+        ref_records: &[RefRecord],
+    ) -> Result<InteriorRefList> {
+        #[cfg(not(test))]
+        let url = Url::parse(api_url)?.join("v1/interior_ref_lists")?;
+        #[cfg(test)]
+        let url = &mockito::server_url();
+
+        let interior_ref_list = InteriorRefList::from_game(shop_id, ref_records);
+        info!(
+            "created interior_ref_list from game: shop_id: {}",
+            &interior_ref_list.shop_id
+        );
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .post(url)
+            .header("Api-Key", api_key)
+            .json(&interior_ref_list)
+            .send()?;
+        info!("create interior_ref_list response from api: {:?}", &resp);
+        let bytes = resp.bytes()?;
+        let json: InteriorRefList = serde_json::from_slice(&bytes)?;
+        if let Some(id) = json.id {
+            let mut file = File::create(file_cache_dir(api_url)?.join(format!("interior_ref_list_{}.json", id)))?;
+            file.write_all(&bytes.as_ref())?;
+        }
+        Ok(json)
+    }
+
+    match inner(&api_url, &api_key, shop_id, ref_records_slice) {
         Ok(interior_ref_list) => {
             if let Some(id) = interior_ref_list.id {
                 id
@@ -457,38 +497,6 @@ pub extern "C" fn create_interior_ref_list(
     }
 }
 
-fn create_interior_ref_list_inner(
-    api_url: &str,
-    api_key: &str,
-    shop_id: i32,
-    ref_records: &[RefRecord],
-) -> Result<InteriorRefList> {
-    #[cfg(not(test))]
-    let url = Url::parse(api_url)?.join("v1/interior_ref_lists")?;
-    #[cfg(test)]
-    let url = &mockito::server_url();
-
-    let interior_ref_list = InteriorRefList::from_game(shop_id, ref_records);
-    info!(
-        "created interior_ref_list from game: shop_id: {}",
-        &interior_ref_list.shop_id
-    );
-    let client = reqwest::blocking::Client::new();
-    let resp = client
-        .post(url)
-        .header("Api-Key", api_key)
-        .json(&interior_ref_list)
-        .send()?;
-    info!("create interior_ref_list response from api: {:?}", &resp);
-    let bytes = resp.bytes()?;
-    let json: InteriorRefList = serde_json::from_slice(&bytes)?;
-    if let Some(id) = json.id {
-        let mut file = File::create(file_cache_dir(api_url)?.join(format!("interior_ref_list_{}.json", id)))?;
-        file.write_all(&bytes.as_ref())?;
-    }
-    Ok(json)
-}
-
 lazy_static! {
     // lazy_static! requires the static values to be thread-safe, so the caches need to be wrapped in a RwLock
     // I'm not sure if multiple C++ threads would be calling into these functions, but at least it should be safe if there are.
@@ -498,7 +506,6 @@ lazy_static! {
 
 // TODO: fetch by shop_id
 #[no_mangle]
-#[unwind(allowed)]
 pub extern "C" fn get_interior_ref_list(
     api_url: *const c_char,
     api_key: *const c_char,
@@ -512,7 +519,6 @@ pub extern "C" fn get_interior_ref_list(
     info!("api_url: {:?}", api_url);
     info!("api_key: {:?}", api_key);
 
-    #[unwind(allowed)]
     fn inner(
         api_url: &str,
         api_key: &str,
@@ -667,7 +673,6 @@ pub extern "C" fn create_merchandise_list(
 
 // TODO: fetch by shop_id
 #[no_mangle]
-#[unwind(allowed)]
 pub extern "C" fn get_merchandise_list(
     api_url: *const c_char,
     api_key: *const c_char,
@@ -681,7 +686,6 @@ pub extern "C" fn get_merchandise_list(
     info!("api_url: {:?}", api_url);
     info!("api_key: {:?}", api_key);
 
-    #[unwind(allowed)]
     fn inner(
         api_url: &str,
         api_key: &str,

@@ -145,7 +145,7 @@ FFIResult<MerchRecordVec> get_merchandise_list(const char *api_url,
                                                const char *api_key,
                                                int32_t merchandise_list_id);
 
-void init();
+bool init();
 
 bool status_check(const char *api_url);
 
