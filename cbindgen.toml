@@ -70,11 +70,9 @@ renaming_overrides_prefixing = false
 
 /* bad hack added by thallada. See: https://github.com/eqrion/cbindgen/issues/402 */
 struct _Helper_0 {
-    FFIResult<RefRecordVec> field;
-};
-
-struct _Helper_1 {
-    FFIResult<MerchRecordVec> field;
+    FFIResult<RefRecordVec> ref_record_vec_result;
+    FFIResult<MerchRecordVec> merch_record_vec_result;
+    FFIResult<ShopRecord> shop_record_result;
 };
 
 // dummy extern C block to close curly brace

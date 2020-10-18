@@ -79,6 +79,14 @@ impl Shop {
     }
 }
 
+#[derive(Debug)]
+#[repr(C)]
+pub struct ShopRecord {
+    id: i32,
+    name: *const c_char,
+    description: *const c_char,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 struct InteriorRef {
     base_mod_name: String,
@@ -238,11 +246,13 @@ unsafe impl Send for RefRecordVec {}
 unsafe impl Send for RefRecord {}
 unsafe impl Send for MerchRecordVec {}
 unsafe impl Send for MerchRecord {}
+unsafe impl Send for ShopRecord {}
 unsafe impl<T> Sync for FFIResult<T> {}
 unsafe impl Sync for RefRecordVec {}
 unsafe impl Sync for RefRecord {}
 unsafe impl Sync for MerchRecordVec {}
 unsafe impl Sync for MerchRecord {}
+unsafe impl Sync for ShopRecord {}
 
 
 #[no_mangle]
@@ -369,12 +379,77 @@ pub extern "C" fn create_owner(
 
 // Because C++ does not have Result, -1 means that the request was unsuccessful
 #[no_mangle]
+pub extern "C" fn update_owner(
+    api_url: *const c_char,
+    api_key: *const c_char,
+    id: u32,
+    name: *const c_char,
+    mod_version: u32,
+) -> i32 {
+    info!("update_owner begin");
+    let api_url = unsafe { CStr::from_ptr(api_url) };
+    let api_key = unsafe { CStr::from_ptr(api_key) };
+    let name = unsafe { CStr::from_ptr(name) };
+    let api_url = api_url.to_string_lossy();
+    let api_key = api_key.to_string_lossy();
+    let name = name.to_string_lossy();
+    info!("api_url: {:?}", api_url);
+    info!("api_key: {:?}", api_key);
+    info!("name: {:?}", name);
+    info!("mod_version: {:?}", mod_version);
+
+    fn inner(api_url: &str, api_key: &str, id: u32, name: &str, mod_version: u32) -> Result<Owner> {
+        #[cfg(not(test))]
+        let url = Url::parse(api_url)?.join(&format!("v1/owners/{}", id))?;
+        #[cfg(test)]
+        let url = &mockito::server_url();
+
+        let owner = Owner::from_game(name, api_key, mod_version);
+        info!("created owner from game: {:?}", &owner);
+        if let Some(api_key) = &owner.api_key {
+            let client = reqwest::blocking::Client::new();
+            let resp = client
+                .patch(url)
+                .header("Api-Key", api_key.clone())
+                .json(&owner)
+                .send()?;
+            info!("update owner response from api: {:?}", &resp);
+            let bytes = resp.bytes()?;
+            let json: Owner = serde_json::from_slice(&bytes)?;
+            if let Some(id) = json.id {
+                let mut file = File::create(file_cache_dir(api_url)?.join(format!("owner_{}.json", id)))?;
+                file.write_all(&bytes.as_ref())?;
+            }
+            Ok(json)
+        } else {
+            Err(anyhow!("api-key not defined"))
+        }
+    }
+
+    match inner(&api_url, &api_key, id, &name, mod_version) {
+        Ok(owner) => {
+            info!("update_owner successful");
+            if let Some(id) = owner.id {
+                id
+            } else {
+                -1
+            }
+        }
+        Err(err) => {
+            error!("update_owner failed. {}", err);
+            -1
+        }
+    }
+}
+
+// Because C++ does not have Result, -1 means that the request was unsuccessful
+#[no_mangle]
 pub extern "C" fn create_shop(
     api_url: *const c_char,
     api_key: *const c_char,
     name: *const c_char,
     description: *const c_char,
-) -> i32 {
+) -> FFIResult<ShopRecord> {
     info!("create_shop begin");
     let api_url = unsafe { CStr::from_ptr(api_url) };
     let api_key = unsafe { CStr::from_ptr(api_key) };
@@ -417,14 +492,191 @@ pub extern "C" fn create_shop(
         Ok(shop) => {
             info!("create_shop successful");
             if let Some(id) = shop.id {
-                id
+                FFIResult::Ok(ShopRecord {
+                    id,
+                    name: CString::new(shop.name)
+                        .unwrap_or_default()
+                        .into_raw(),
+                    description: CString::new(shop.description)
+                        .unwrap_or_default()
+                        .into_raw(),
+                })
             } else {
-                -1
+                error!("create_shop failed. API did not return a shop with an ID");
+                let err_string = CString::new("API did not return a shop with an ID".to_string())
+                    .expect("could not create CString")
+                    .into_raw();
+                // TODO: also need to drop this CString once C++ is done reading it
+                FFIResult::Err(err_string)
             }
         }
         Err(err) => {
             error!("create_shop failed. {}", err);
-            -1
+            // TODO: also need to drop this CString once C++ is done reading it
+            let err_string = CString::new(err.to_string())
+                .expect("could not create CString")
+                .into_raw();
+            FFIResult::Err(err_string)
+        }
+    }
+}
+
+// Because C++ does not have Result, -1 means that the request was unsuccessful
+#[no_mangle]
+pub extern "C" fn update_shop(
+    api_url: *const c_char,
+    api_key: *const c_char,
+    id: u32,
+    name: *const c_char,
+    description: *const c_char,
+) -> FFIResult<ShopRecord> {
+    info!("update_shop begin");
+    let api_url = unsafe { CStr::from_ptr(api_url) };
+    let api_key = unsafe { CStr::from_ptr(api_key) };
+    let name = unsafe { CStr::from_ptr(name) };
+    let description = unsafe { CStr::from_ptr(description) };
+    let api_url = api_url.to_string_lossy();
+    let api_key = api_key.to_string_lossy();
+    let name = name.to_string_lossy();
+    let description = description.to_string_lossy();
+    info!("api_url: {:?}", api_url);
+    info!("api_key: {:?}", api_key);
+    info!("name: {:?}", name);
+    info!("description: {:?}", description);
+
+    fn inner(api_url: &str, api_key: &str, id: u32, name: &str, description: &str) -> Result<Shop> {
+        #[cfg(not(test))]
+        let url = Url::parse(api_url)?.join(&format!("v1/shops/{}", id))?;
+        #[cfg(test)]
+        let url = &mockito::server_url();
+
+        let shop = Shop::from_game(name, description);
+        info!("created shop from game: {:?}", &shop);
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .patch(url)
+            .header("Api-Key", api_key)
+            .json(&shop)
+            .send()?;
+        info!("update shop response from api: {:?}", &resp);
+        let bytes = resp.bytes()?;
+        let json: Shop = serde_json::from_slice(&bytes)?;
+        if let Some(id) = json.id {
+            let mut file = File::create(file_cache_dir(api_url)?.join(format!("shop_{}.json", id)))?;
+            file.write_all(&bytes.as_ref())?;
+        }
+        Ok(json)
+    }
+
+    match inner(&api_url, &api_key, id, &name, &description) {
+        Ok(shop) => {
+            info!("update_shop successful");
+            if let Some(id) = shop.id {
+                FFIResult::Ok(ShopRecord {
+                    id,
+                    name: CString::new(shop.name)
+                        .unwrap_or_default()
+                        .into_raw(),
+                    description: CString::new(shop.description)
+                        .unwrap_or_default()
+                        .into_raw(),
+                })
+            } else {
+                error!("create_shop failed. API did not return a shop with an ID");
+                let err_string = CString::new("API did not return a shop with an ID".to_string())
+                    .expect("could not create CString")
+                    .into_raw();
+                // TODO: also need to drop this CString once C++ is done reading it
+                FFIResult::Err(err_string)
+            }
+        }
+        Err(err) => {
+            error!("update_shop failed. {}", err);
+            // TODO: also need to drop this CString once C++ is done reading it
+            let err_string = CString::new(err.to_string())
+                .expect("could not create CString")
+                .into_raw();
+            FFIResult::Err(err_string)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn get_shop(
+    api_url: *const c_char,
+    api_key: *const c_char,
+    shop_id: i32,
+) -> FFIResult<ShopRecord> {
+    info!("get_shop begin");
+    let api_url = unsafe { CStr::from_ptr(api_url) };
+    let api_key = unsafe { CStr::from_ptr(api_key) };
+    let api_url = api_url.to_string_lossy();
+    let api_key = api_key.to_string_lossy();
+    info!("api_url: {:?}", api_url);
+    info!("api_key: {:?}", api_key);
+
+    fn inner(
+        api_url: &str,
+        api_key: &str,
+        shop_id: i32,
+    ) -> Result<Shop> {
+        #[cfg(not(test))]
+        let url =
+            Url::parse(api_url)?.join(&format!("v1/shops/{}", shop_id))?;
+        #[cfg(test)]
+        let url = &mockito::server_url();
+        info!("api_url: {:?}", url);
+
+        let client = reqwest::blocking::Client::new();
+        let cache_path = file_cache_dir(api_url)?.join(format!("shop_{}.json", shop_id));
+
+        fn from_file_cache(cache_path: &Path) -> Result<Shop> {
+            let file = File::open(cache_path)?;
+            let reader = BufReader::new(file);
+            info!("get_shop returning value from cache: {:?}", cache_path);
+            Ok(serde_json::from_reader(reader)?)
+        }
+
+        match client.get(url).header("Api-Key", api_key).send() {
+            Ok(resp) => {
+                info!("get_shop response from api: {:?}", &resp);
+                if !resp.status().is_server_error() {
+                    let mut file = File::create(&cache_path)?;
+                    let bytes = resp.bytes()?;
+                    file.write_all(&bytes.as_ref())?;
+                    let json = serde_json::from_slice(&bytes)?;
+                    Ok(json)
+                } else {
+                    from_file_cache(&cache_path)
+                }
+            }
+            Err(err) => {
+                error!("get_shop api request error: {}", err);
+                from_file_cache(&cache_path)
+            }
+        }
+    }
+
+    match inner(&api_url, &api_key, shop_id) {
+        Ok(shop) => {
+            // TODO: need to pass this back into Rust once C++ is done with it so it can be manually dropped and the CStrings dropped from raw pointers.
+            FFIResult::Ok(ShopRecord {
+                id: shop_id,
+                name: CString::new(shop.name)
+                    .unwrap_or_default()
+                    .into_raw(),
+                description: CString::new(shop.description)
+                    .unwrap_or_default()
+                    .into_raw(),
+            })
+        }
+        Err(err) => {
+            error!("get_shop_list failed. {}", err);
+            let err_string = CString::new(err.to_string())
+                .expect("could not create CString")
+                .into_raw();
+            // TODO: also need to drop this CString once C++ is done reading it
+            FFIResult::Err(err_string)
         }
     }
 }

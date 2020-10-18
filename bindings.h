@@ -29,10 +29,10 @@ struct MerchRecord {
   uint32_t price;
 };
 
-struct RefRecordVec {
-  RefRecord *ptr;
-  uintptr_t len;
-  uintptr_t cap;
+struct ShopRecord {
+  int32_t id;
+  const char *name;
+  const char *description;
 };
 
 template<typename T>
@@ -89,6 +89,12 @@ struct FFIResult {
   }
 };
 
+struct RefRecordVec {
+  RefRecord *ptr;
+  uintptr_t len;
+  uintptr_t cap;
+};
+
 struct MerchRecordVec {
   MerchRecord *ptr;
   uintptr_t len;
@@ -97,11 +103,9 @@ struct MerchRecordVec {
 
 /* bad hack added by thallada. See: https://github.com/eqrion/cbindgen/issues/402 */
 struct _Helper_0 {
-    FFIResult<RefRecordVec> field;
-};
-
-struct _Helper_1 {
-    FFIResult<MerchRecordVec> field;
+    FFIResult<RefRecordVec> ref_record_vec_result;
+    FFIResult<MerchRecordVec> merch_record_vec_result;
+    FFIResult<ShopRecord> shop_record_result;
 };
 
 // dummy extern C block to close curly brace
@@ -128,10 +132,10 @@ int32_t create_owner(const char *api_url,
                      const char *name,
                      uint32_t mod_version);
 
-int32_t create_shop(const char *api_url,
-                    const char *api_key,
-                    const char *name,
-                    const char *description);
+FFIResult<ShopRecord> create_shop(const char *api_url,
+                                  const char *api_key,
+                                  const char *name,
+                                  const char *description);
 
 void free_string(char *ptr);
 
@@ -145,8 +149,22 @@ FFIResult<MerchRecordVec> get_merchandise_list(const char *api_url,
                                                const char *api_key,
                                                int32_t merchandise_list_id);
 
+FFIResult<ShopRecord> get_shop(const char *api_url, const char *api_key, int32_t shop_id);
+
 bool init();
 
 bool status_check(const char *api_url);
+
+int32_t update_owner(const char *api_url,
+                     const char *api_key,
+                     uint32_t id,
+                     const char *name,
+                     uint32_t mod_version);
+
+FFIResult<ShopRecord> update_shop(const char *api_url,
+                                  const char *api_key,
+                                  uint32_t id,
+                                  const char *name,
+                                  const char *description);
 
 } // extern "C"
