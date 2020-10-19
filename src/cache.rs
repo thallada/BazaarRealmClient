@@ -1,4 +1,3 @@
-/// Thin wrapper around HashMap that automatically assigns new entries with an incrementing key (like a database)
 use std::{fs::create_dir_all, fs::File, io::BufReader, io::Write, path::Path, path::PathBuf};
 
 use anyhow::{Context, Result};
