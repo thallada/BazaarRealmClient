@@ -65,17 +65,20 @@ renaming_overrides_prefixing = false
 
 
 [export.body]
-"MerchRecordVec" = """
+"RawMerchandiseVec" = """
 };
 
 /* bad hack added by thallada. See: https://github.com/eqrion/cbindgen/issues/402 */
 struct _Helper_0 {
-    FFIResult<RefRecordVec> ref_record_vec_result;
-    FFIResult<MerchRecordVec> merch_record_vec_result;
-    FFIResult<ShopRecord> shop_record_result;
+    FFIResult<bool> _bool_result;
+    FFIResult<int32_t> _int_result;
+    FFIResult<RawOwner> _raw_owner_result;
+    FFIResult<RawShop> _raw_shop_result;
+    FFIResult<RawInteriorRefVec> _raw_interior_ref_vec_result;
+    FFIResult<RawMerchandiseVec> _raw_merchandise_vec_result;
 };
 
-// dummy extern C block to close curly brace
+// dummy extern C block to close curly brace (did I mention this is a bad hack?)
 extern "C" {
 """
 

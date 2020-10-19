@@ -12,16 +12,16 @@ cbindgen = "0.14.4"
 [dependencies]
 anyhow = "1.0"
 base64 = "0.13"
+bytes = "0.5"
 mockito = "0.26.0"
 reqwest = { version = "0.10", features = ["blocking", "json", "gzip"] }
-lazy_static = "1.4"
 log = "0.4"
 simple-logging = "2.0"
 dirs = "3.0"
 uuid = { version = "0.8", features = ["v4"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-url = "2.1"
+tempfile = "3.1"
 
 [lib]
 name = "BazaarRealmClient"

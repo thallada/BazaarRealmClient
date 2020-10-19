@@ -1,37 +1,47 @@
 /// Thin wrapper around HashMap that automatically assigns new entries with an incrementing key (like a database)
-use std::collections::HashMap;
+use std::{fs::create_dir_all, fs::File, io::BufReader, io::Write, path::Path, path::PathBuf};
 
-pub struct Cache<T> {
-    next_key: usize,
-    cache: HashMap<usize, T>,
+use anyhow::Result;
+use base64::{encode_config, URL_SAFE_NO_PAD};
+use bytes::Bytes;
+use serde::Deserialize;
+#[cfg(test)]
+use tempfile::tempfile;
+
+#[cfg(not(test))]
+use log::info;
+#[cfg(test)]
+use std::println as info;
+
+use super::API_VERSION;
+
+pub fn file_cache_dir(api_url: &str) -> Result<PathBuf> {
+    let encoded_url = encode_config(api_url, URL_SAFE_NO_PAD);
+    let path = Path::new("Data/SKSE/Plugins/BazaarRealmCache")
+        .join(encoded_url)
+        .join(API_VERSION);
+    #[cfg(not(test))]
+    create_dir_all(&path)?;
+    Ok(path)
 }
 
-impl<T> Default for Cache<T> {
-    fn default() -> Self {
-        Cache {
-            next_key: 0,
-            cache: HashMap::new(),
-        }
-    }
+pub fn update_file_cache(cache_path: &Path, bytes: &Bytes) -> Result<()> {
+    #[cfg(not(test))]
+    let mut file = File::create(cache_path)?;
+    #[cfg(test)]
+    let mut file = tempfile()?;
+
+    file.write_all(&bytes.as_ref())?;
+    Ok(())
 }
 
-impl<T> Cache<T> {
-    pub fn new() -> Self {
-        Default::default()
-    }
+pub fn from_file_cache<T: for<'de> Deserialize<'de>>(cache_path: &Path) -> Result<T> {
+    #[cfg(not(test))]
+    let file = File::open(cache_path)?;
+    #[cfg(test)]
+    let file = tempfile()?; // cache always reads from an empty temp file in cfg(test)
 
-    pub fn insert(&mut self, value: T) -> usize {
-        let new_key = self.next_key;
-        self.cache.insert(new_key, value);
-        self.next_key += 1;
-        new_key
-    }
-
-    pub fn get(&self, key: &usize) -> Option<&T> {
-        self.cache.get(key)
-    }
-
-    pub fn remove(&mut self, key: &usize) {
-        self.cache.remove(key);
-    }
+    let reader = BufReader::new(file);
+    info!("returning value from cache: {:?}", cache_path);
+    Ok(serde_json::from_reader(reader)?)
 }

@@ -5,36 +5,6 @@
 #include <cassert>
 
 
-struct RefRecord {
-  const char *base_mod_name;
-  uint32_t base_local_form_id;
-  const char *ref_mod_name;
-  uint32_t ref_local_form_id;
-  float position_x;
-  float position_y;
-  float position_z;
-  float angle_x;
-  float angle_y;
-  float angle_z;
-  uint16_t scale;
-};
-
-struct MerchRecord {
-  const char *mod_name;
-  uint32_t local_form_id;
-  const char *name;
-  uint32_t quantity;
-  uint32_t form_type;
-  uint8_t is_food;
-  uint32_t price;
-};
-
-struct ShopRecord {
-  int32_t id;
-  const char *name;
-  const char *description;
-};
-
 template<typename T>
 struct FFIResult {
   enum class Tag : uint8_t {
@@ -89,82 +59,121 @@ struct FFIResult {
   }
 };
 
-struct RefRecordVec {
-  RefRecord *ptr;
+struct RawInteriorRef {
+  const char *base_mod_name;
+  uint32_t base_local_form_id;
+  const char *ref_mod_name;
+  uint32_t ref_local_form_id;
+  float position_x;
+  float position_y;
+  float position_z;
+  float angle_x;
+  float angle_y;
+  float angle_z;
+  uint16_t scale;
+};
+
+struct RawMerchandise {
+  const char *mod_name;
+  uint32_t local_form_id;
+  const char *name;
+  uint32_t quantity;
+  uint32_t form_type;
+  uint8_t is_food;
+  uint32_t price;
+};
+
+struct RawOwner {
+  int32_t id;
+  const char *name;
+  uint32_t mod_version;
+};
+
+struct RawShop {
+  int32_t id;
+  const char *name;
+  const char *description;
+};
+
+struct RawInteriorRefVec {
+  RawInteriorRef *ptr;
   uintptr_t len;
   uintptr_t cap;
 };
 
-struct MerchRecordVec {
-  MerchRecord *ptr;
+struct RawMerchandiseVec {
+  RawMerchandise *ptr;
   uintptr_t len;
   uintptr_t cap;
 };
 
 /* bad hack added by thallada. See: https://github.com/eqrion/cbindgen/issues/402 */
 struct _Helper_0 {
-    FFIResult<RefRecordVec> ref_record_vec_result;
-    FFIResult<MerchRecordVec> merch_record_vec_result;
-    FFIResult<ShopRecord> shop_record_result;
+    FFIResult<bool> _bool_result;
+    FFIResult<int32_t> _int_result;
+    FFIResult<RawOwner> _raw_owner_result;
+    FFIResult<RawShop> _raw_shop_result;
+    FFIResult<RawInteriorRefVec> _raw_interior_ref_vec_result;
+    FFIResult<RawMerchandiseVec> _raw_merchandise_vec_result;
 };
 
-// dummy extern C block to close curly brace
+// dummy extern C block to close curly brace (did I mention this is a bad hack?)
 extern "C" {
 };
 
 
 extern "C" {
 
-int32_t create_interior_ref_list(const char *api_url,
+FFIResult<int32_t> create_interior_ref_list(const char *api_url,
+                                            const char *api_key,
+                                            int32_t shop_id,
+                                            const RawInteriorRef *raw_interior_ref_ptr,
+                                            uintptr_t raw_interior_ref_len);
+
+FFIResult<int32_t> create_merchandise_list(const char *api_url,
+                                           const char *api_key,
+                                           int32_t shop_id,
+                                           const RawMerchandise *raw_merchandise_ptr,
+                                           uintptr_t raw_merchandise_len);
+
+FFIResult<RawOwner> create_owner(const char *api_url,
                                  const char *api_key,
-                                 int32_t shop_id,
-                                 const RefRecord *ref_records,
-                                 uintptr_t ref_records_len);
+                                 const char *name,
+                                 uint32_t mod_version);
 
-int32_t create_merchandise_list(const char *api_url,
-                                const char *api_key,
-                                int32_t shop_id,
-                                const MerchRecord *merch_records,
-                                uintptr_t merch_records_len);
-
-int32_t create_owner(const char *api_url,
-                     const char *api_key,
-                     const char *name,
-                     uint32_t mod_version);
-
-FFIResult<ShopRecord> create_shop(const char *api_url,
-                                  const char *api_key,
-                                  const char *name,
-                                  const char *description);
+FFIResult<RawShop> create_shop(const char *api_url,
+                               const char *api_key,
+                               const char *name,
+                               const char *description);
 
 void free_string(char *ptr);
 
 char *generate_api_key();
 
-FFIResult<RefRecordVec> get_interior_ref_list(const char *api_url,
-                                              const char *api_key,
-                                              int32_t interior_ref_list_id);
+FFIResult<RawInteriorRefVec> get_interior_ref_list(const char *api_url,
+                                                   const char *api_key,
+                                                   int32_t interior_ref_list_id);
 
-FFIResult<MerchRecordVec> get_merchandise_list(const char *api_url,
-                                               const char *api_key,
-                                               int32_t merchandise_list_id);
+FFIResult<RawMerchandiseVec> get_merchandise_list(const char *api_url,
+                                                  const char *api_key,
+                                                  int32_t merchandise_list_id);
 
-FFIResult<ShopRecord> get_shop(const char *api_url, const char *api_key, int32_t shop_id);
+FFIResult<RawShop> get_shop(const char *api_url, const char *api_key, int32_t shop_id);
 
 bool init();
 
-bool status_check(const char *api_url);
+FFIResult<bool> status_check(const char *api_url);
 
-int32_t update_owner(const char *api_url,
-                     const char *api_key,
-                     uint32_t id,
-                     const char *name,
-                     uint32_t mod_version);
+FFIResult<RawOwner> update_owner(const char *api_url,
+                                 const char *api_key,
+                                 uint32_t id,
+                                 const char *name,
+                                 uint32_t mod_version);
 
-FFIResult<ShopRecord> update_shop(const char *api_url,
-                                  const char *api_key,
-                                  uint32_t id,
-                                  const char *name,
-                                  const char *description);
+FFIResult<RawShop> update_shop(const char *api_url,
+                               const char *api_key,
+                               uint32_t id,
+                               const char *name,
+                               const char *description);
 
 } // extern "C"

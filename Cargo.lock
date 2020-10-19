@@ -107,16 +107,16 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.13.0",
+ "bytes",
  "cbindgen",
  "dirs",
- "lazy_static",
  "log",
  "mockito",
  "reqwest",
  "serde",
  "serde_json",
  "simple-logging",
- "url",
+ "tempfile",
  "uuid",
 ]
 
