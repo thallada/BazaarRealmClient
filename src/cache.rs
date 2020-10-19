@@ -1,7 +1,7 @@
 /// Thin wrapper around HashMap that automatically assigns new entries with an incrementing key (like a database)
 use std::{fs::create_dir_all, fs::File, io::BufReader, io::Write, path::Path, path::PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base64::{encode_config, URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use serde::Deserialize;
@@ -37,7 +37,10 @@ pub fn update_file_cache(cache_path: &Path, bytes: &Bytes) -> Result<()> {
 
 pub fn from_file_cache<T: for<'de> Deserialize<'de>>(cache_path: &Path) -> Result<T> {
     #[cfg(not(test))]
-    let file = File::open(cache_path)?;
+    let file = File::open(cache_path).context(format!(
+        "Object not found in API or in cache: {}",
+        cache_path.file_name().unwrap_or_default().to_string_lossy()
+    ))?;
     #[cfg(test)]
     let file = tempfile()?; // cache always reads from an empty temp file in cfg(test)
 

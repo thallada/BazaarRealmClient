@@ -65,7 +65,7 @@ renaming_overrides_prefixing = false
 
 
 [export.body]
-"RawMerchandiseVec" = """
+"RawShopVec" = """
 };
 
 /* bad hack added by thallada. See: https://github.com/eqrion/cbindgen/issues/402 */
@@ -74,6 +74,7 @@ struct _Helper_0 {
     FFIResult<int32_t> _int_result;
     FFIResult<RawOwner> _raw_owner_result;
     FFIResult<RawShop> _raw_shop_result;
+    FFIResult<RawShopVec> _raw_shop_vec_result;
     FFIResult<RawInteriorRefVec> _raw_interior_ref_vec_result;
     FFIResult<RawMerchandiseVec> _raw_merchandise_vec_result;
 };

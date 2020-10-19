@@ -107,12 +107,19 @@ struct RawMerchandiseVec {
   uintptr_t cap;
 };
 
+struct RawShopVec {
+  RawShop *ptr;
+  uintptr_t len;
+  uintptr_t cap;
+};
+
 /* bad hack added by thallada. See: https://github.com/eqrion/cbindgen/issues/402 */
 struct _Helper_0 {
     FFIResult<bool> _bool_result;
     FFIResult<int32_t> _int_result;
     FFIResult<RawOwner> _raw_owner_result;
     FFIResult<RawShop> _raw_shop_result;
+    FFIResult<RawShopVec> _raw_shop_vec_result;
     FFIResult<RawInteriorRefVec> _raw_interior_ref_vec_result;
     FFIResult<RawMerchandiseVec> _raw_merchandise_vec_result;
 };
@@ -161,6 +168,8 @@ FFIResult<RawMerchandiseVec> get_merchandise_list(const char *api_url,
 FFIResult<RawShop> get_shop(const char *api_url, const char *api_key, int32_t shop_id);
 
 bool init();
+
+FFIResult<RawShopVec> list_shops(const char *api_url, const char *api_key);
 
 FFIResult<bool> status_check(const char *api_url);
 

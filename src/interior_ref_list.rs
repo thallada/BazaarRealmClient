@@ -200,7 +200,7 @@ pub extern "C" fn get_interior_ref_list(
         match client.get(url).header("Api-Key", api_key).send() {
             Ok(resp) => {
                 info!("get_interior_ref_list response from api: {:?}", &resp);
-                if !resp.status().is_server_error() {
+                if resp.status().is_success() {
                     let bytes = resp.bytes()?;
                     update_file_cache(&cache_path, &bytes)?;
                     let json = serde_json::from_slice(&bytes)?;
