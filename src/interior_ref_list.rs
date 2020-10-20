@@ -170,7 +170,6 @@ pub extern "C" fn create_interior_ref_list(
     }
 }
 
-// TODO: fetch by shop_id
 #[no_mangle]
 pub extern "C" fn get_interior_ref_list(
     api_url: *const c_char,
@@ -249,6 +248,94 @@ pub extern "C" fn get_interior_ref_list(
         }
         Err(err) => {
             error!("interior_ref_list failed. {}", err);
+            // TODO: how to do error handling?
+            let err_string = CString::new(err.to_string())
+                .expect("could not create CString")
+                .into_raw();
+            // TODO: also need to drop this CString once C++ is done reading it
+            FFIResult::Err(err_string)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn get_latest_interior_ref_list_by_shop_id(
+    api_url: *const c_char,
+    api_key: *const c_char,
+    shop_id: i32,
+) -> FFIResult<RawInteriorRefVec> {
+    let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
+    let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
+    info!(
+        "get_latest_interior_ref_list_by_shop_id api_url: {:?}, api_key: {:?}, shop_id: {:?}",
+        api_url, api_key, shop_id
+    );
+
+    fn inner(api_url: &str, api_key: &str, shop_id: i32) -> Result<InteriorRefList> {
+        #[cfg(not(test))]
+        let url = Url::parse(api_url)?
+            .join(&format!("v1/shops/{}/latest_interior_ref_list", shop_id))?;
+        #[cfg(test)]
+        let url = Url::parse(&mockito::server_url())?
+            .join(&format!("v1/shops/{}/latest_interior_ref_list", shop_id))?;
+        info!("api_url: {:?}", url);
+
+        let client = reqwest::blocking::Client::new();
+        let cache_path = file_cache_dir(api_url)?
+            .join(format!("latest_interior_ref_list_{}.json", shop_id));
+
+        match client.get(url).header("Api-Key", api_key).send() {
+            Ok(resp) => {
+                info!("get_latest_interior_ref_list_by_shop_id response from api: {:?}", &resp);
+                if resp.status().is_success() {
+                    let bytes = resp.bytes()?;
+                    update_file_cache(&cache_path, &bytes)?;
+                    let json = serde_json::from_slice(&bytes)?;
+                    Ok(json)
+                } else {
+                    log_server_error(resp);
+                    from_file_cache(&cache_path)
+                }
+            }
+            Err(err) => {
+                error!("get_latest_interior_ref_list_by_shop_id api request error: {}", err);
+                from_file_cache(&cache_path)
+            }
+        }
+    }
+
+    match inner(&api_url, &api_key, shop_id) {
+        Ok(interior_ref_list) => {
+            let (ptr, len, cap) = interior_ref_list
+                .ref_list
+                .into_iter()
+                .map(|interior_ref| RawInteriorRef {
+                    base_mod_name: CString::new(interior_ref.base_mod_name)
+                        .unwrap_or_default()
+                        .into_raw(),
+                    base_local_form_id: interior_ref.base_local_form_id as u32,
+                    ref_mod_name: match interior_ref.ref_mod_name {
+                        None => std::ptr::null(),
+                        Some(ref_mod_name) => {
+                            CString::new(ref_mod_name).unwrap_or_default().into_raw()
+                        }
+                    },
+                    ref_local_form_id: interior_ref.ref_local_form_id as u32,
+                    position_x: interior_ref.position_x,
+                    position_y: interior_ref.position_y,
+                    position_z: interior_ref.position_z,
+                    angle_x: interior_ref.angle_x,
+                    angle_y: interior_ref.angle_y,
+                    angle_z: interior_ref.angle_z,
+                    scale: interior_ref.scale,
+                })
+                .collect::<Vec<RawInteriorRef>>()
+                .into_raw_parts();
+            // TODO: need to pass this back into Rust once C++ is done with it so it can be manually dropped and the CStrings dropped from raw pointers.
+            FFIResult::Ok(RawInteriorRefVec { ptr, len, cap })
+        }
+        Err(err) => {
+            error!("get_latest_interior_ref_list_by_shop_id failed. {}", err);
             // TODO: how to do error handling?
             let err_string = CString::new(err.to_string())
                 .expect("could not create CString")
@@ -427,6 +514,101 @@ mod tests {
         match result {
             FFIResult::Ok(raw_interior_ref_vec) => panic!(
                 "get_interior_ref_list returned Ok result: {:#x?}",
+                raw_interior_ref_vec
+            ),
+            FFIResult::Err(error) => {
+                assert_eq!(
+                    unsafe { CStr::from_ptr(error).to_string_lossy() },
+                    "EOF while parsing a value at line 1 column 0" // empty tempfile
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_latest_interior_ref_list_by_shop_id() {
+        let mock = mock("GET", "/v1/shops/1/latest_interior_ref_list")
+            .with_status(201)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "created_at": "2020-08-18T00:00:00.000",
+                "id": 1,
+                "shop_id": 1,
+                "ref_list": [
+                    {
+                        "base_mod_name": "Skyrim.esm",
+                        "base_local_form_id": 1,
+                        "ref_mod_name": "BazaarRealm.esp",
+                        "ref_local_form_id": 1,
+                        "position_x": 100.0,
+                        "position_y": 0.0,
+                        "position_z": 100.0,
+                        "angle_x": 0.0,
+                        "angle_y": 0.0,
+                        "angle_z": 0.0,
+                        "scale": 1
+                    }
+                ],
+                "updated_at": "2020-08-18T00:00:00.000"
+            }"#,
+            )
+            .create();
+
+        let api_url = CString::new("url").unwrap().into_raw();
+        let api_key = CString::new("api-key").unwrap().into_raw();
+        let result = get_latest_interior_ref_list_by_shop_id(api_url, api_key, 1);
+        mock.assert();
+        match result {
+            FFIResult::Ok(raw_interior_ref_vec) => {
+                assert_eq!(raw_interior_ref_vec.len, 1);
+                let raw_interior_ref_slice = unsafe {
+                    assert!(!raw_interior_ref_vec.ptr.is_null());
+                    slice::from_raw_parts(raw_interior_ref_vec.ptr, raw_interior_ref_vec.len)
+                };
+                let raw_interior_ref = &raw_interior_ref_slice[0];
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_interior_ref.base_mod_name) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "Skyrim.esm".to_string(),
+                );
+                assert_eq!(raw_interior_ref.base_local_form_id, 1);
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_interior_ref.ref_mod_name) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "BazaarRealm.esp".to_string(),
+                );
+                assert_eq!(raw_interior_ref.ref_local_form_id, 1);
+                assert_eq!(raw_interior_ref.position_x, 100.);
+                assert_eq!(raw_interior_ref.position_y, 0.);
+                assert_eq!(raw_interior_ref.position_z, 100.);
+                assert_eq!(raw_interior_ref.angle_x, 0.);
+                assert_eq!(raw_interior_ref.angle_y, 0.);
+                assert_eq!(raw_interior_ref.angle_z, 0.);
+                assert_eq!(raw_interior_ref.scale, 1);
+            }
+            FFIResult::Err(error) => panic!("get_latest_interior_ref_list_by_shop_id returned error: {:?}", unsafe {
+                CStr::from_ptr(error).to_string_lossy()
+            }),
+        }
+    }
+
+    #[test]
+    fn test_get_latest_interior_ref_list_by_shop_id_server_error() {
+        let mock = mock("GET", "/v1/shops/1/latest_interior_ref_list")
+            .with_status(500)
+            .with_body("Internal Server Error")
+            .create();
+
+        let api_url = CString::new("url").unwrap().into_raw();
+        let api_key = CString::new("api-key").unwrap().into_raw();
+        let result = get_latest_interior_ref_list_by_shop_id(api_url, api_key, 1);
+        mock.assert();
+        match result {
+            FFIResult::Ok(raw_interior_ref_vec) => panic!(
+                "get_latest_interior_ref_list_by_shop_id returned Ok result: {:#x?}",
                 raw_interior_ref_vec
             ),
             FFIResult::Err(error) => {
