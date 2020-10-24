@@ -35,9 +35,9 @@ pub extern "C" fn status_check(api_url: *const c_char) -> FFIResult<bool> {
 
     fn inner(api_url: &str) -> Result<Response> {
         #[cfg(not(test))]
-        let api_url = Url::parse(api_url)?.join("status")?;
+        let api_url = Url::parse(api_url)?.join("v1/status")?;
         #[cfg(test)]
-        let api_url = Url::parse(&mockito::server_url())?.join("status")?;
+        let api_url = Url::parse(&mockito::server_url())?.join("v1/status")?;
 
         Ok(reqwest::blocking::get(api_url)?)
     }
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_status_check() {
-        let mock = mock("GET", "/status").with_status(200).create();
+        let mock = mock("GET", "/v1/status").with_status(200).create();
 
         let api_url = CString::new("url").unwrap().into_raw();
         let result = status_check(api_url);
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn test_status_check_server_error() {
-        let mock = mock("GET", "/status")
+        let mock = mock("GET", "/v1/status")
             .with_status(500)
             .with_body("Internal Server Error")
             .create();

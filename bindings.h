@@ -161,9 +161,9 @@ FFIResult<RawInteriorRefVec> get_interior_ref_list(const char *api_url,
                                                    const char *api_key,
                                                    int32_t interior_ref_list_id);
 
-FFIResult<RawInteriorRefVec> get_latest_interior_ref_list_by_shop_id(const char *api_url,
-                                                                     const char *api_key,
-                                                                     int32_t shop_id);
+FFIResult<RawInteriorRefVec> get_interior_ref_list_by_shop_id(const char *api_url,
+                                                              const char *api_key,
+                                                              int32_t shop_id);
 
 FFIResult<RawMerchandiseVec> get_merchandise_list(const char *api_url,
                                                   const char *api_key,
