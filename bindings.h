@@ -169,6 +169,10 @@ FFIResult<RawMerchandiseVec> get_merchandise_list(const char *api_url,
                                                   const char *api_key,
                                                   int32_t merchandise_list_id);
 
+FFIResult<RawMerchandiseVec> get_merchandise_list_by_shop_id(const char *api_url,
+                                                             const char *api_key,
+                                                             int32_t shop_id);
+
 FFIResult<RawShop> get_shop(const char *api_url, const char *api_key, int32_t shop_id);
 
 bool init();
@@ -176,6 +180,18 @@ bool init();
 FFIResult<RawShopVec> list_shops(const char *api_url, const char *api_key);
 
 FFIResult<bool> status_check(const char *api_url);
+
+FFIResult<int32_t> update_interior_ref_list(const char *api_url,
+                                            const char *api_key,
+                                            int32_t shop_id,
+                                            const RawInteriorRef *raw_interior_ref_ptr,
+                                            uintptr_t raw_interior_ref_len);
+
+FFIResult<int32_t> update_merchandise_list(const char *api_url,
+                                           const char *api_key,
+                                           int32_t shop_id,
+                                           const RawMerchandise *raw_merchandise_ptr,
+                                           uintptr_t raw_merchandise_len);
 
 FFIResult<RawOwner> update_owner(const char *api_url,
                                  const char *api_key,
