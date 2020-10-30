@@ -79,7 +79,7 @@ struct RawMerchandise {
   const char *name;
   uint32_t quantity;
   uint32_t form_type;
-  uint8_t is_food;
+  bool is_food;
   uint32_t price;
 };
 
@@ -93,6 +93,16 @@ struct RawShop {
   int32_t id;
   const char *name;
   const char *description;
+};
+
+struct RawTransaction {
+  uint32_t id;
+  uint32_t shop_id;
+  const char *mod_name;
+  uint32_t local_form_id;
+  bool is_sell;
+  uint32_t quantity;
+  uint32_t amount;
 };
 
 struct RawInteriorRefVec {
@@ -152,6 +162,15 @@ FFIResult<RawShop> create_shop(const char *api_url,
                                const char *api_key,
                                const char *name,
                                const char *description);
+
+FFIResult<RawTransaction> create_transaction(const char *api_url,
+                                             const char *api_key,
+                                             uint32_t shop_id,
+                                             const char *mod_name,
+                                             uint32_t local_form_id,
+                                             bool is_sell,
+                                             uint32_t quantity,
+                                             uint32_t amount);
 
 void free_string(char *ptr);
 

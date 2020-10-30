@@ -211,7 +211,7 @@ pub extern "C" fn update_interior_ref_list(
         info!("update interior_ref_list response from api: {:?}", &resp);
         let bytes = resp.bytes()?;
         let json: InteriorRefList = serde_json::from_slice(&bytes)?;
-        if let Some(id) = json.id {
+        if let Some(_id) = json.id {
             update_file_cache(
                 &file_cache_dir(api_url)?.join(format!("shops_{}_interior_ref_list.json", shop_id)),
                 &bytes,

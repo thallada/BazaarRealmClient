@@ -19,6 +19,7 @@ mod merchandise_list;
 mod owner;
 mod result;
 mod shop;
+mod transaction;
 
 pub const API_VERSION: &'static str = "v1";
 

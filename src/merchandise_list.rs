@@ -49,7 +49,7 @@ impl MerchandiseList {
                         .to_string(),
                     quantity: rec.quantity,
                     form_type: rec.form_type,
-                    is_food: rec.is_food == 1,
+                    is_food: rec.is_food,
                     price: rec.price,
                 })
                 .collect(),
@@ -65,7 +65,7 @@ pub struct RawMerchandise {
     pub name: *const c_char,
     pub quantity: u32,
     pub form_type: u32,
-    pub is_food: u8,
+    pub is_food: bool,
     pub price: u32,
 }
 
@@ -211,10 +211,10 @@ pub extern "C" fn update_merchandise_list(
                 FFIResult::Ok(id)
             } else {
                 error!(
-                    "update_merchandise failed. API did not return an interior ref list with an ID"
+                    "update_merchandise failed. API did not return a merchandise list with an ID"
                 );
                 let err_string =
-                    CString::new("API did not return an interior ref list with an ID".to_string())
+                    CString::new("API did not return a merchandise list with an ID".to_string())
                         .expect("could not create CString")
                         .into_raw();
                 // TODO: also need to drop this CString once C++ is done reading it
@@ -294,7 +294,7 @@ pub extern "C" fn get_merchandise_list(
                         .into_raw(),
                     quantity: merchandise.quantity,
                     form_type: merchandise.form_type,
-                    is_food: merchandise.is_food as u8,
+                    is_food: merchandise.is_food,
                     price: merchandise.price,
                 })
                 .collect::<Vec<RawMerchandise>>()
@@ -377,7 +377,7 @@ pub extern "C" fn get_merchandise_list_by_shop_id(
                         .into_raw(),
                     quantity: merchandise.quantity,
                     form_type: merchandise.form_type,
-                    is_food: merchandise.is_food as u8,
+                    is_food: merchandise.is_food,
                     price: merchandise.price,
                 })
                 .collect::<Vec<RawMerchandise>>()
@@ -420,7 +420,7 @@ mod tests {
             name: CString::new("Iron Sword").unwrap().into_raw(),
             quantity: 1,
             form_type: 1,
-            is_food: 0,
+            is_food: false,
             price: 100,
         }]
         .into_raw_parts();
@@ -439,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_interior_ref_list_server_error() {
+    fn test_create_merchandise_list_server_error() {
         let mock = mock("POST", "/v1/merchandise_lists")
             .with_status(500)
             .with_body("Internal Server Error")
@@ -453,7 +453,7 @@ mod tests {
             name: CString::new("Iron Sword").unwrap().into_raw(),
             quantity: 1,
             form_type: 1,
-            is_food: 0,
+            is_food: false,
             price: 100,
         }]
         .into_raw_parts();
@@ -489,7 +489,7 @@ mod tests {
             name: CString::new("Iron Sword").unwrap().into_raw(),
             quantity: 1,
             form_type: 1,
-            is_food: 0,
+            is_food: false,
             price: 100,
         }]
         .into_raw_parts();
@@ -508,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn test_update_interior_ref_list_server_error() {
+    fn test_update_merchandise_list_server_error() {
         let mock = mock("PATCH", "/v1/shops/1/merchandise_list")
             .with_status(500)
             .with_body("Internal Server Error")
@@ -522,7 +522,7 @@ mod tests {
             name: CString::new("Iron Sword").unwrap().into_raw(),
             quantity: 1,
             form_type: 1,
-            is_food: 0,
+            is_food: false,
             price: 100,
         }]
         .into_raw_parts();
@@ -594,7 +594,7 @@ mod tests {
                 );
                 assert_eq!(raw_merchandise.quantity, 1);
                 assert_eq!(raw_merchandise.form_type, 1);
-                assert_eq!(raw_merchandise.is_food, 0);
+                assert_eq!(raw_merchandise.is_food, false);
                 assert_eq!(raw_merchandise.price, 100);
             }
             FFIResult::Err(error) => panic!("get_merchandise_list returned error: {:?}", unsafe {
@@ -681,7 +681,7 @@ mod tests {
                 );
                 assert_eq!(raw_merchandise.quantity, 1);
                 assert_eq!(raw_merchandise.form_type, 1);
-                assert_eq!(raw_merchandise.is_food, 0);
+                assert_eq!(raw_merchandise.is_food, false);
                 assert_eq!(raw_merchandise.price, 100);
             }
             FFIResult::Err(error) => panic!(
