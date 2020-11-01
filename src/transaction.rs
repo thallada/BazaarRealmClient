@@ -20,6 +20,10 @@ pub struct Transaction {
     pub shop_id: u32,
     pub mod_name: String,
     pub local_form_id: u32,
+    pub name: String,
+    pub form_type: u32,
+    pub is_food: bool,
+    pub price: u32,
     pub is_sell: bool,
     pub quantity: u32,
     pub amount: u32,
@@ -30,6 +34,10 @@ impl Transaction {
         shop_id: u32,
         mod_name: &str,
         local_form_id: u32,
+        name: &str,
+        form_type: u32,
+        is_food: bool,
+        price: u32,
         is_sell: bool,
         quantity: u32,
         amount: u32,
@@ -39,6 +47,10 @@ impl Transaction {
             shop_id,
             mod_name: mod_name.to_string(),
             local_form_id,
+            name: name.to_string(),
+            form_type,
+            is_food,
+            price,
             is_sell,
             quantity,
             amount,
@@ -49,12 +61,18 @@ impl Transaction {
 impl From<RawTransaction> for Transaction {
     fn from(raw_transaction: RawTransaction) -> Self {
         Self {
-            id: Some(raw_transaction.id),
+            id: raw_transaction.id,
             shop_id: raw_transaction.shop_id,
             mod_name: unsafe { CStr::from_ptr(raw_transaction.mod_name) }
                 .to_string_lossy()
                 .to_string(),
             local_form_id: raw_transaction.local_form_id,
+            name: unsafe { CStr::from_ptr(raw_transaction.name) }
+                .to_string_lossy()
+                .to_string(),
+            form_type: raw_transaction.form_type,
+            is_food: raw_transaction.is_food,
+            price: raw_transaction.price,
             is_sell: raw_transaction.is_sell,
             quantity: raw_transaction.quantity,
             amount: raw_transaction.amount,
@@ -65,33 +83,37 @@ impl From<RawTransaction> for Transaction {
 #[derive(Debug)]
 #[repr(C)]
 pub struct RawTransaction {
-    pub id: u32,
+    pub id: Option<u32>,
     pub shop_id: u32,
     pub mod_name: *const c_char,
     pub local_form_id: u32,
+    pub name: *const c_char,
+    pub form_type: u32,
+    pub is_food: bool,
+    pub price: u32,
     pub is_sell: bool,
     pub quantity: u32,
     pub amount: u32,
 }
 
-impl TryFrom<Transaction> for RawTransaction {
-    type Error = anyhow::Error;
-
-    fn try_from(transaction: Transaction) -> Result<Self> {
-        if let Some(id) = transaction.id {
-            Ok(Self {
-                id,
-                shop_id: transaction.shop_id,
-                mod_name: CString::new(transaction.mod_name)
-                    .unwrap_or_default()
-                    .into_raw(),
-                local_form_id: transaction.local_form_id,
-                is_sell: transaction.is_sell,
-                quantity: transaction.quantity,
-                amount: transaction.amount,
-            })
-        } else {
-            Err(anyhow!("transaction.id is None"))
+impl From<Transaction> for RawTransaction {
+    fn from(transaction: Transaction) -> Self {
+        Self {
+            id: transaction.id,
+            shop_id: transaction.shop_id,
+            mod_name: CString::new(transaction.mod_name)
+                .unwrap_or_default()
+                .into_raw(),
+            local_form_id: transaction.local_form_id,
+            name: CString::new(transaction.name)
+                .unwrap_or_default()
+                .into_raw(),
+            form_type: transaction.form_type,
+            is_food: transaction.is_food,
+            price: transaction.price,
+            is_sell: transaction.is_sell,
+            quantity: transaction.quantity,
+            amount: transaction.amount,
         }
     }
 }
@@ -108,18 +130,11 @@ pub struct RawTransactionVec {
 pub extern "C" fn create_transaction(
     api_url: *const c_char,
     api_key: *const c_char,
-    shop_id: u32,
-    mod_name: *const c_char,
-    local_form_id: u32,
-    is_sell: bool,
-    quantity: u32,
-    amount: u32,
+    raw_transaction: RawTransaction,
 ) -> FFIResult<RawTransaction> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
-    let mod_name = unsafe { CStr::from_ptr(mod_name) }.to_string_lossy();
-    let transaction =
-        Transaction::from_game(shop_id, &mod_name, local_form_id, is_sell, quantity, amount);
+    let transaction = Transaction::from(raw_transaction);
     info!(
         "create_transaction api_url: {:?}, api_key: {:?}, transaction: {:?}",
         api_url, api_key, transaction
@@ -190,11 +205,15 @@ mod tests {
                 r#"{
                 "amount": 100,
                 "created_at": "2020-08-18T00:00:00.000",
+                "form_type": 41,
                 "id": 1,
+                "is_food": false,
                 "is_sell": false,
                 "local_form_id": 1,
                 "mod_name": "Skyrim.esm",
+                "name": "Item",
                 "owner_id": 1,
+                "price": 100,
                 "quantity": 1,
                 "shop_id": 1,
                 "updated_at": "2020-08-18T00:00:00.000"
@@ -205,17 +224,38 @@ mod tests {
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
         let mod_name = CString::new("Skyrim.esm").unwrap().into_raw();
-        let result = create_transaction(api_url, api_key, 1, mod_name, 1, false, 1, 100);
+        let name = CString::new("Item").unwrap().into_raw();
+        let raw_transaction = RawTransaction {
+            id: None,
+            shop_id: 1,
+            mod_name,
+            local_form_id: 1,
+            name,
+            form_type: 41,
+            is_food: false,
+            price: 100,
+            is_sell: false,
+            amount: 100,
+            quantity: 1,
+        };
+        let result = create_transaction(api_url, api_key, raw_transaction);
         mock.assert();
         match result {
             FFIResult::Ok(raw_transaction) => {
-                assert_eq!(raw_transaction.id, 1);
+                assert_eq!(raw_transaction.id, Some(1));
                 assert_eq!(raw_transaction.shop_id, 1);
                 assert_eq!(
                     unsafe { CStr::from_ptr(raw_transaction.mod_name).to_string_lossy() },
                     "Skyrim.esm"
                 );
                 assert_eq!(raw_transaction.local_form_id, 1);
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_transaction.name).to_string_lossy() },
+                    "Item"
+                );
+                assert_eq!(raw_transaction.form_type, 41);
+                assert_eq!(raw_transaction.is_food, false);
+                assert_eq!(raw_transaction.price, 100);
                 assert_eq!(raw_transaction.is_sell, false);
                 assert_eq!(raw_transaction.quantity, 1);
                 assert_eq!(raw_transaction.amount, 100);
@@ -236,7 +276,21 @@ mod tests {
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
         let mod_name = CString::new("Skyrim.esm").unwrap().into_raw();
-        let result = create_transaction(api_url, api_key, 1, mod_name, 1, false, 1, 100);
+        let name = CString::new("Item").unwrap().into_raw();
+        let raw_transaction = RawTransaction {
+            id: None,
+            shop_id: 1,
+            mod_name,
+            local_form_id: 1,
+            name,
+            form_type: 41,
+            is_food: false,
+            price: 100,
+            is_sell: false,
+            amount: 100,
+            quantity: 1,
+        };
+        let result = create_transaction(api_url, api_key, raw_transaction);
         mock.assert();
         match result {
             FFIResult::Ok(raw_transaction) => panic!(
