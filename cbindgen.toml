@@ -77,6 +77,7 @@ struct _Helper_0 {
     FFIResult<RawShopVec> _raw_shop_vec_result;
     FFIResult<RawInteriorRefVec> _raw_interior_ref_vec_result;
     FFIResult<RawMerchandiseVec> _raw_merchandise_vec_result;
+    FFIResult<RawTransaction> _raw_transaction_result;
 };
 
 // dummy extern C block to close curly brace (did I mention this is a bad hack?)

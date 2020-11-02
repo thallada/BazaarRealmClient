@@ -5,9 +5,6 @@
 #include <cassert>
 
 
-template<typename T = void>
-struct Option;
-
 template<typename T>
 struct FFIResult {
   enum class Tag : uint8_t {
@@ -99,7 +96,7 @@ struct RawShop {
 };
 
 struct RawTransaction {
-  Option<uint32_t> id;
+  uint32_t id;
   uint32_t shop_id;
   const char *mod_name;
   uint32_t local_form_id;
@@ -139,6 +136,7 @@ struct _Helper_0 {
     FFIResult<RawShopVec> _raw_shop_vec_result;
     FFIResult<RawInteriorRefVec> _raw_interior_ref_vec_result;
     FFIResult<RawMerchandiseVec> _raw_merchandise_vec_result;
+    FFIResult<RawTransaction> _raw_transaction_result;
 };
 
 // dummy extern C block to close curly brace (did I mention this is a bad hack?)

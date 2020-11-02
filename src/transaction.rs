@@ -1,6 +1,7 @@
-use std::{convert::TryFrom, ffi::CStr, ffi::CString, os::raw::c_char, slice};
+use std::{convert::TryFrom, ffi::CStr, ffi::CString, os::raw::c_char, slice, str};
 
 use anyhow::{anyhow, Result};
+use http_api_problem::HttpApiProblem;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +62,10 @@ impl Transaction {
 impl From<RawTransaction> for Transaction {
     fn from(raw_transaction: RawTransaction) -> Self {
         Self {
-            id: raw_transaction.id,
+            id: match raw_transaction.id {
+                0 => None,
+                _ => Some(raw_transaction.id),
+            },
             shop_id: raw_transaction.shop_id,
             mod_name: unsafe { CStr::from_ptr(raw_transaction.mod_name) }
                 .to_string_lossy()
@@ -83,7 +87,7 @@ impl From<RawTransaction> for Transaction {
 #[derive(Debug)]
 #[repr(C)]
 pub struct RawTransaction {
-    pub id: Option<u32>,
+    pub id: u32,
     pub shop_id: u32,
     pub mod_name: *const c_char,
     pub local_form_id: u32,
@@ -99,7 +103,7 @@ pub struct RawTransaction {
 impl From<Transaction> for RawTransaction {
     fn from(transaction: Transaction) -> Self {
         Self {
-            id: transaction.id,
+            id: transaction.id.unwrap_or(0),
             shop_id: transaction.shop_id,
             mod_name: CString::new(transaction.mod_name)
                 .unwrap_or_default()
@@ -153,15 +157,34 @@ pub extern "C" fn create_transaction(
             .json(&transaction)
             .send()?;
         info!("create transaction response from api: {:?}", &resp);
+        let status = resp.status();
         let bytes = resp.bytes()?;
-        let json: Transaction = serde_json::from_slice(&bytes)?;
-        if let Some(id) = json.id {
-            update_file_cache(
-                &file_cache_dir(api_url)?.join(format!("transaction_{}.json", id)),
-                &bytes,
-            )?;
+        if status.is_success() {
+            let json: Transaction = serde_json::from_slice(&bytes)?;
+            if let Some(id) = json.id {
+                update_file_cache(
+                    &file_cache_dir(api_url)?.join(format!("transaction_{}.json", id)),
+                    &bytes,
+                )?;
+            }
+            Ok(json)
+        } else {
+            match serde_json::from_slice::<HttpApiProblem>(&bytes) {
+                Ok(api_problem) => {
+                    let detail = api_problem.detail.unwrap_or("".to_string());
+                    error!("Server {} error: {}. {}", status, api_problem.title, detail);
+                    Err(anyhow!(format!(
+                        "Server {} error: {}. {}",
+                        status, api_problem.title, detail
+                    )))
+                }
+                Err(_) => {
+                    let detail = str::from_utf8(&bytes).unwrap_or("unknown");
+                    error!("Server {} error: {}", status, detail);
+                    Err(anyhow!(format!("Server {} error: {}", status, detail)))
+                }
+            }
         }
-        Ok(json)
     }
 
     match inner(&api_url, &api_key, transaction) {
@@ -226,7 +249,7 @@ mod tests {
         let mod_name = CString::new("Skyrim.esm").unwrap().into_raw();
         let name = CString::new("Item").unwrap().into_raw();
         let raw_transaction = RawTransaction {
-            id: None,
+            id: 0,
             shop_id: 1,
             mod_name,
             local_form_id: 1,
@@ -242,7 +265,7 @@ mod tests {
         mock.assert();
         match result {
             FFIResult::Ok(raw_transaction) => {
-                assert_eq!(raw_transaction.id, Some(1));
+                assert_eq!(raw_transaction.id, 1);
                 assert_eq!(raw_transaction.shop_id, 1);
                 assert_eq!(
                     unsafe { CStr::from_ptr(raw_transaction.mod_name).to_string_lossy() },
@@ -278,7 +301,7 @@ mod tests {
         let mod_name = CString::new("Skyrim.esm").unwrap().into_raw();
         let name = CString::new("Item").unwrap().into_raw();
         let raw_transaction = RawTransaction {
-            id: None,
+            id: 0,
             shop_id: 1,
             mod_name,
             local_form_id: 1,
