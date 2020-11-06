@@ -11,8 +11,8 @@ use log::{error, info};
 use std::{println as info, println as error};
 
 use crate::{
-    cache::file_cache_dir, cache::from_file_cache, cache::update_file_cache, log_server_error,
-    result::FFIResult,
+    cache::file_cache_dir, cache::from_file_cache, cache::update_file_cache,
+    cache::update_metadata_file_cache, log_server_error, result::FFIResult,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -157,31 +157,43 @@ pub extern "C" fn create_transaction(
             .json(&transaction)
             .send()?;
         info!("create transaction response from api: {:?}", &resp);
+
+        let cache_dir = file_cache_dir(api_url)?;
+        let headers = resp.headers().clone();
         let status = resp.status();
         let bytes = resp.bytes()?;
         if status.is_success() {
             let json: Transaction = serde_json::from_slice(&bytes)?;
             if let Some(id) = json.id {
-                update_file_cache(
-                    &file_cache_dir(api_url)?.join(format!("transaction_{}.json", id)),
-                    &bytes,
+                update_file_cache(&cache_dir.join(format!("transaction_{}.json", id)), &bytes)?;
+                update_metadata_file_cache(
+                    &cache_dir.join(format!("transaction_{}_metadata.json", id)),
+                    &headers,
                 )?;
             }
             Ok(json)
         } else {
+            // TODO: abstract this away into a separate helper
             match serde_json::from_slice::<HttpApiProblem>(&bytes) {
                 Ok(api_problem) => {
                     let detail = api_problem.detail.unwrap_or("".to_string());
-                    error!("Server {} error: {}. {}", status, api_problem.title, detail);
+                    error!(
+                        "Server {}: {}. {}",
+                        status.as_u16(),
+                        api_problem.title,
+                        detail
+                    );
                     Err(anyhow!(format!(
-                        "Server {} error: {}. {}",
-                        status, api_problem.title, detail
+                        "Server {}: {}. {}",
+                        status.as_u16(),
+                        api_problem.title,
+                        detail
                     )))
                 }
                 Err(_) => {
                     let detail = str::from_utf8(&bytes).unwrap_or("unknown");
-                    error!("Server {} error: {}", status, detail);
-                    Err(anyhow!(format!("Server {} error: {}", status, detail)))
+                    error!("Server {}: {}", status.as_u16(), detail);
+                    Err(anyhow!(format!("Server {}: {}", status.as_u16(), detail)))
                 }
             }
         }
@@ -293,7 +305,15 @@ mod tests {
     fn test_create_transaction_server_error() {
         let mock = mock("POST", "/v1/transactions")
             .with_status(500)
-            .with_body("Internal Server Error")
+            .with_header("content-type", "application/problem+json")
+            .with_body(
+                r#"{
+                "detail": "Some error detail",
+                "instance": "https://httpstatuses.com/500",
+                "status": 500,
+                "title": "Internal Server Error"
+            }"#,
+            )
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -323,7 +343,7 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "expected value at line 1 column 1"
+                    "Server 500: Internal Server Error. Some error detail"
                 );
             }
         }

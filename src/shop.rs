@@ -1,7 +1,7 @@
 use std::{convert::TryFrom, ffi::CStr, ffi::CString, os::raw::c_char};
 
 use anyhow::{anyhow, Result};
-use reqwest::Url;
+use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(test))]
@@ -10,8 +10,9 @@ use log::{error, info};
 use std::{println as info, println as error};
 
 use crate::{
-    cache::file_cache_dir, cache::from_file_cache, cache::update_file_cache, log_server_error,
-    result::FFIResult,
+    cache::file_cache_dir, cache::from_file_cache, cache::load_metadata_from_file_cache,
+    cache::update_file_cache, cache::update_file_caches, cache::update_metadata_file_cache,
+    log_server_error, result::FFIResult,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -110,12 +111,16 @@ pub extern "C" fn create_shop(
             .json(&shop)
             .send()?;
         info!("create shop response from api: {:?}", &resp);
+
+        let cache_dir = file_cache_dir(api_url)?;
+        let headers = resp.headers().clone();
         let bytes = resp.bytes()?;
         let json: Shop = serde_json::from_slice(&bytes)?;
         if let Some(id) = json.id {
-            update_file_cache(
-                &file_cache_dir(api_url)?.join(format!("shop_{}.json", id)),
-                &bytes,
+            update_file_cache(&cache_dir.join(format!("shop_{}.json", id)), &bytes)?;
+            update_metadata_file_cache(
+                &cache_dir.join(format!("shop_{}_metadata.json", id)),
+                &headers,
             )?;
         }
         Ok(json)
@@ -179,14 +184,12 @@ pub extern "C" fn update_shop(
             .json(&shop)
             .send()?;
         info!("update shop response from api: {:?}", &resp);
-        let bytes = resp.bytes()?;
+
+        let cache_dir = file_cache_dir(api_url)?;
+        let body_cache_path = cache_dir.join(format!("shop_{}.json", id));
+        let metadata_cache_path = cache_dir.join(format!("shop_{}_metadata.json", id));
+        let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
         let json: Shop = serde_json::from_slice(&bytes)?;
-        if let Some(id) = json.id {
-            update_file_cache(
-                &file_cache_dir(api_url)?.join(format!("shop_{}.json", id)),
-                &bytes,
-            )?;
-        }
         Ok(json)
     }
 
@@ -237,24 +240,34 @@ pub extern "C" fn get_shop(
         info!("api_url: {:?}", url);
 
         let client = reqwest::blocking::Client::new();
-        let cache_path = file_cache_dir(api_url)?.join(format!("shop_{}.json", shop_id));
+        let cache_dir = file_cache_dir(api_url)?;
+        let body_cache_path = cache_dir.join(format!("shop_{}.json", shop_id));
+        let metadata_cache_path = cache_dir.join(format!("shop_{}_metadata.json", shop_id));
+        let mut request = client.get(url).header("Api-Key", api_key);
+        // TODO: load metadata from in-memory LRU cache first before trying to load from file
+        if let Ok(metadata) = load_metadata_from_file_cache(&metadata_cache_path) {
+            if let Some(etag) = metadata.etag {
+                request = request.header("If-None-Match", etag);
+            }
+        }
 
-        match client.get(url).header("Api-Key", api_key).send() {
+        match request.send() {
             Ok(resp) => {
                 info!("get_shop response from api: {:?}", &resp);
                 if resp.status().is_success() {
-                    let bytes = resp.bytes()?;
-                    update_file_cache(&cache_path, &bytes)?;
+                    let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
                     let json = serde_json::from_slice(&bytes)?;
                     Ok(json)
+                } else if resp.status() == StatusCode::NOT_MODIFIED {
+                    from_file_cache(&body_cache_path)
                 } else {
                     log_server_error(resp);
-                    from_file_cache(&cache_path)
+                    from_file_cache(&body_cache_path)
                 }
             }
             Err(err) => {
                 error!("get_shop api request error: {}", err);
-                from_file_cache(&cache_path)
+                from_file_cache(&body_cache_path)
             }
         }
     }
@@ -301,24 +314,34 @@ pub extern "C" fn list_shops(
         info!("api_url: {:?}", url);
 
         let client = reqwest::blocking::Client::new();
-        let cache_path = file_cache_dir(api_url)?.join("shops.json");
+        let cache_dir = file_cache_dir(api_url)?;
+        let body_cache_path = cache_dir.join("shops.json");
+        let metadata_cache_path = cache_dir.join("shops_metadata.json");
+        let mut request = client.get(url).header("Api-Key", api_key);
+        // TODO: load metadata from in-memory LRU cache first before trying to load from file
+        if let Ok(metadata) = load_metadata_from_file_cache(&metadata_cache_path) {
+            if let Some(etag) = metadata.etag {
+                request = request.header("If-None-Match", etag);
+            }
+        }
 
-        match client.get(url).header("Api-Key", api_key).send() {
+        match request.send() {
             Ok(resp) => {
                 info!("list_shops response from api: {:?}", &resp);
                 if resp.status().is_success() {
-                    let bytes = resp.bytes()?;
-                    update_file_cache(&cache_path, &bytes)?;
+                    let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
                     let json = serde_json::from_slice(&bytes)?;
                     Ok(json)
+                } else if resp.status() == StatusCode::NOT_MODIFIED {
+                    from_file_cache(&body_cache_path)
                 } else {
                     log_server_error(resp);
-                    from_file_cache(&cache_path)
+                    from_file_cache(&body_cache_path)
                 }
             }
             Err(err) => {
                 error!("list_shops api request error: {}", err);
-                from_file_cache(&cache_path)
+                from_file_cache(&body_cache_path)
             }
         }
     }
