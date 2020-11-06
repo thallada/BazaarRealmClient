@@ -205,9 +205,9 @@ pub extern "C" fn update_merchandise_list(
         info!("update merchandise_list response from api: {:?}", &resp);
 
         let cache_dir = file_cache_dir(api_url)?;
-        let body_cache_path = cache_dir.join(format!("shops_{}_merchandise_list.json", shop_id));
+        let body_cache_path = cache_dir.join(format!("shop_{}_merchandise_list.json", shop_id));
         let metadata_cache_path =
-            cache_dir.join(format!("shops_{}_merchandise_list_metadata.json", shop_id));
+            cache_dir.join(format!("shop_{}_merchandise_list_metadata.json", shop_id));
         let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
         let json: MerchandiseList = serde_json::from_slice(&bytes)?;
         Ok(json)
@@ -359,9 +359,9 @@ pub extern "C" fn get_merchandise_list_by_shop_id(
 
         let client = reqwest::blocking::Client::new();
         let cache_dir = file_cache_dir(api_url)?;
-        let body_cache_path = cache_dir.join(format!("shops_{}_merchandise_list.json", shop_id));
+        let body_cache_path = cache_dir.join(format!("shop_{}_merchandise_list.json", shop_id));
         let metadata_cache_path =
-            cache_dir.join(format!("shops_{}_merchandise_list_metadata.json", shop_id));
+            cache_dir.join(format!("shop_{}_merchandise_list_metadata.json", shop_id));
         let mut request = client.get(url).header("Api-Key", api_key);
         // TODO: load metadata from in-memory LRU cache first before trying to load from file
         if let Ok(metadata) = load_metadata_from_file_cache(&metadata_cache_path) {

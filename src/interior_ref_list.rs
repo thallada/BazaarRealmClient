@@ -220,9 +220,9 @@ pub extern "C" fn update_interior_ref_list(
         info!("update interior_ref_list response from api: {:?}", &resp);
 
         let cache_dir = file_cache_dir(api_url)?;
-        let body_cache_path = cache_dir.join(format!("shops_{}_interior_ref_list.json", shop_id));
+        let body_cache_path = cache_dir.join(format!("shop_{}_interior_ref_list.json", shop_id));
         let metadata_cache_path =
-            cache_dir.join(format!("shops_{}_interior_ref_list_metadata.json", shop_id));
+            cache_dir.join(format!("shop_{}_interior_ref_list_metadata.json", shop_id));
         let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
         let json: InteriorRefList = serde_json::from_slice(&bytes)?;
         Ok(json)
@@ -378,9 +378,9 @@ pub extern "C" fn get_interior_ref_list_by_shop_id(
 
         let client = reqwest::blocking::Client::new();
         let cache_dir = file_cache_dir(api_url)?;
-        let body_cache_path = cache_dir.join(format!("shops_{}_interior_ref_list.json", shop_id));
+        let body_cache_path = cache_dir.join(format!("shop_{}_interior_ref_list.json", shop_id));
         let metadata_cache_path =
-            cache_dir.join(format!("shops_{}_interior_ref_list_metadata.json", shop_id));
+            cache_dir.join(format!("shop_{}_interior_ref_list_metadata.json", shop_id));
         let mut request = client.get(url).header("Api-Key", api_key);
         // TODO: load metadata from in-memory LRU cache first before trying to load from file
         if let Ok(metadata) = load_metadata_from_file_cache(&metadata_cache_path) {
