@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, ffi::CStr, ffi::CString, os::raw::c_char, slice, str};
+use std::{convert::TryFrom, ffi::CStr, ffi::CString, os::raw::c_char, slice, str, thread};
 
 use anyhow::{anyhow, Result};
 use http_api_problem::HttpApiProblem;
@@ -11,8 +11,8 @@ use log::{error, info};
 use std::{println as info, println as error};
 
 use crate::{
-    cache::file_cache_dir, cache::from_file_cache, cache::update_file_cache,
-    cache::update_metadata_file_cache, log_server_error, result::FFIResult,
+    cache::file_cache_dir, cache::from_file_cache, cache::update_file_caches, log_server_error,
+    result::FFIResult,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -165,11 +165,10 @@ pub extern "C" fn create_transaction(
         if status.is_success() {
             let json: Transaction = serde_json::from_slice(&bytes)?;
             if let Some(id) = json.id {
-                update_file_cache(&cache_dir.join(format!("transaction_{}.json", id)), &bytes)?;
-                update_metadata_file_cache(
-                    &cache_dir.join(format!("transaction_{}_metadata.json", id)),
-                    &headers,
-                )?;
+                let body_cache_path = cache_dir.join(format!("transaction_{}.json", id));
+                let metadata_cache_path =
+                    cache_dir.join(format!("transaction_{}_metadata.json", id));
+                update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
             }
             Ok(json)
         } else {

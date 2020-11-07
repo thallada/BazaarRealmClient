@@ -1,18 +1,20 @@
-use std::{fs::create_dir_all, fs::File, io::BufReader, io::Write, path::Path, path::PathBuf};
+use std::{
+    fs::create_dir_all, fs::File, io::BufReader, io::Write, path::Path, path::PathBuf, thread,
+};
 
 use anyhow::{Context, Result};
 use base64::{encode_config, URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use reqwest::{blocking::Response, header::HeaderMap};
+use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use tempfile::tempfile;
 
 #[cfg(not(test))]
-use log::info;
+use log::{error, info};
 #[cfg(test)]
-use std::println as info;
+use std::{println as error, println as info};
 
 use super::API_VERSION;
 
@@ -60,14 +62,23 @@ pub fn update_metadata_file_cache(cache_path: &Path, headers: &HeaderMap) -> Res
 }
 
 pub fn update_file_caches(
-    body_cache_path: &Path,
-    metadata_cache_path: &Path,
-    response: Response,
-) -> Result<Bytes> {
-    update_metadata_file_cache(metadata_cache_path, &response.headers())?;
-    let bytes = response.bytes()?;
-    update_file_cache(body_cache_path, &bytes)?;
-    Ok(bytes)
+    body_cache_path: PathBuf,
+    metadata_cache_path: PathBuf,
+    bytes: Bytes,
+    headers: HeaderMap,
+) {
+    thread::spawn(move || {
+        update_file_cache(&body_cache_path, &bytes)
+            .map_err(|err| {
+                error!("Failed to update body file cache: {}", err);
+            })
+            .ok();
+        update_metadata_file_cache(&metadata_cache_path, &headers)
+            .map_err(|err| {
+                error!("Failed to update metadata file cache: {}", err);
+            })
+            .ok();
+    });
 }
 
 pub fn from_file_cache<T: for<'de> Deserialize<'de>>(cache_path: &Path) -> Result<T> {

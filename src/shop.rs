@@ -11,8 +11,7 @@ use std::{println as info, println as error};
 
 use crate::{
     cache::file_cache_dir, cache::from_file_cache, cache::load_metadata_from_file_cache,
-    cache::update_file_cache, cache::update_file_caches, cache::update_metadata_file_cache,
-    log_server_error, result::FFIResult,
+    cache::update_file_caches, log_server_error, result::FFIResult,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -117,11 +116,9 @@ pub extern "C" fn create_shop(
         let bytes = resp.bytes()?;
         let json: Shop = serde_json::from_slice(&bytes)?;
         if let Some(id) = json.id {
-            update_file_cache(&cache_dir.join(format!("shop_{}.json", id)), &bytes)?;
-            update_metadata_file_cache(
-                &cache_dir.join(format!("shop_{}_metadata.json", id)),
-                &headers,
-            )?;
+            let body_cache_path = cache_dir.join(format!("shop_{}.json", id));
+            let metadata_cache_path = cache_dir.join(format!("shop_{}_metadata.json", id));
+            update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
         }
         Ok(json)
     }
@@ -188,8 +185,10 @@ pub extern "C" fn update_shop(
         let cache_dir = file_cache_dir(api_url)?;
         let body_cache_path = cache_dir.join(format!("shop_{}.json", id));
         let metadata_cache_path = cache_dir.join(format!("shop_{}_metadata.json", id));
-        let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
+        let headers = resp.headers().clone();
+        let bytes = resp.bytes()?;
         let json: Shop = serde_json::from_slice(&bytes)?;
+        update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
         Ok(json)
     }
 
@@ -255,8 +254,10 @@ pub extern "C" fn get_shop(
             Ok(resp) => {
                 info!("get_shop response from api: {:?}", &resp);
                 if resp.status().is_success() {
-                    let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
+                    let headers = resp.headers().clone();
+                    let bytes = resp.bytes()?;
                     let json = serde_json::from_slice(&bytes)?;
+                    update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
                     Ok(json)
                 } else if resp.status() == StatusCode::NOT_MODIFIED {
                     from_file_cache(&body_cache_path)
@@ -329,8 +330,10 @@ pub extern "C" fn list_shops(
             Ok(resp) => {
                 info!("list_shops response from api: {:?}", &resp);
                 if resp.status().is_success() {
-                    let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
+                    let headers = resp.headers().clone();
+                    let bytes = resp.bytes()?;
                     let json = serde_json::from_slice(&bytes)?;
+                    update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
                     Ok(json)
                 } else if resp.status() == StatusCode::NOT_MODIFIED {
                     from_file_cache(&body_cache_path)

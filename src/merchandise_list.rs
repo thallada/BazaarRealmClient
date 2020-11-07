@@ -11,8 +11,7 @@ use std::{println as info, println as error};
 
 use crate::{
     cache::file_cache_dir, cache::from_file_cache, cache::load_metadata_from_file_cache,
-    cache::update_file_cache, cache::update_file_caches, cache::update_metadata_file_cache,
-    log_server_error, result::FFIResult,
+    cache::update_file_caches, log_server_error, result::FFIResult,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -124,14 +123,10 @@ pub extern "C" fn create_merchandise_list(
         let bytes = resp.bytes()?;
         let json: MerchandiseList = serde_json::from_slice(&bytes)?;
         if let Some(id) = json.id {
-            update_file_cache(
-                &cache_dir.join(format!("merchandise_list_{}.json", id)),
-                &bytes,
-            )?;
-            update_metadata_file_cache(
-                &cache_dir.join(format!("merchandise_list_{}_metadata.json", id)),
-                &headers,
-            )?;
+            let body_cache_path = cache_dir.join(format!("merchandise_list_{}.json", id));
+            let metadata_cache_path =
+                cache_dir.join(format!("merchandise_list_{}_metadata.json", id));
+            update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
         }
         Ok(json)
     }
@@ -208,8 +203,10 @@ pub extern "C" fn update_merchandise_list(
         let body_cache_path = cache_dir.join(format!("shop_{}_merchandise_list.json", shop_id));
         let metadata_cache_path =
             cache_dir.join(format!("shop_{}_merchandise_list_metadata.json", shop_id));
-        let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
+        let headers = resp.headers().clone();
+        let bytes = resp.bytes()?;
         let json: MerchandiseList = serde_json::from_slice(&bytes)?;
+        update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
         Ok(json)
     }
 
@@ -284,8 +281,10 @@ pub extern "C" fn get_merchandise_list(
             Ok(resp) => {
                 info!("get_merchandise_list response from api: {:?}", &resp);
                 if resp.status().is_success() {
-                    let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
+                    let headers = resp.headers().clone();
+                    let bytes = resp.bytes()?;
                     let json = serde_json::from_slice(&bytes)?;
+                    update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
                     Ok(json)
                 } else if resp.status() == StatusCode::NOT_MODIFIED {
                     from_file_cache(&body_cache_path)
@@ -377,8 +376,10 @@ pub extern "C" fn get_merchandise_list_by_shop_id(
                     &resp
                 );
                 if resp.status().is_success() {
-                    let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
+                    let headers = resp.headers().clone();
+                    let bytes = resp.bytes()?;
                     let json = serde_json::from_slice(&bytes)?;
+                    update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
                     Ok(json)
                 } else if resp.status() == StatusCode::NOT_MODIFIED {
                     from_file_cache(&body_cache_path)

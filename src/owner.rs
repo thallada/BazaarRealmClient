@@ -9,10 +9,7 @@ use log::{error, info};
 #[cfg(test)]
 use std::{println as info, println as error};
 
-use crate::{
-    cache::file_cache_dir, cache::update_file_cache, cache::update_file_caches,
-    cache::update_metadata_file_cache, result::FFIResult,
-};
+use crate::{cache::file_cache_dir, cache::update_file_caches, result::FFIResult};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Owner {
@@ -78,11 +75,9 @@ pub extern "C" fn create_owner(
             let bytes = resp.bytes()?;
             let json: Owner = serde_json::from_slice(&bytes)?;
             if let Some(id) = json.id {
-                update_file_cache(&cache_dir.join(format!("owner_{}.json", id)), &bytes)?;
-                update_metadata_file_cache(
-                    &cache_dir.join(format!("owner_{}_metadata.json", id)),
-                    &headers,
-                )?;
+                let body_cache_path = cache_dir.join(format!("owner_{}.json", id));
+                let metadata_cache_path = cache_dir.join(format!("owner_{}_metadata.json", id));
+                update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
             }
             Ok(json)
         } else {
@@ -155,8 +150,10 @@ pub extern "C" fn update_owner(
             let cache_dir = file_cache_dir(api_url)?;
             let body_cache_path = cache_dir.join(format!("owner_{}.json", id));
             let metadata_cache_path = cache_dir.join(format!("owner_{}_metadata.json", id));
-            let bytes = update_file_caches(&body_cache_path, &metadata_cache_path, resp)?;
+            let headers = resp.headers().clone();
+            let bytes = resp.bytes()?;
             let json: Owner = serde_json::from_slice(&bytes)?;
+            update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
             Ok(json)
         } else {
             Err(anyhow!("api-key not defined"))
