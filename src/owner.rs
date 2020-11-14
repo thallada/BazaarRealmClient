@@ -1,6 +1,7 @@
 use std::{ffi::CStr, ffi::CString, os::raw::c_char};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+use chrono::NaiveDateTime;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
@@ -9,23 +10,31 @@ use log::{error, info};
 #[cfg(test)]
 use std::{println as info, println as error};
 
-use crate::{cache::file_cache_dir, cache::update_file_caches, result::FFIResult};
+use crate::{
+    cache::file_cache_dir, cache::update_file_caches, error::extract_error_from_response,
+    result::FFIResult,
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Owner {
-    pub id: Option<i32>,
     pub name: String,
-    pub api_key: Option<String>,
-    pub mod_version: u32,
+    pub mod_version: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SavedOwner {
+    pub id: i32,
+    pub name: String,
+    pub mod_version: i32,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
 }
 
 impl Owner {
-    pub fn from_game(name: &str, api_key: &str, mod_version: u32) -> Self {
+    pub fn from_game(name: &str, mod_version: i32) -> Self {
         Self {
-            id: None,
             name: name.to_string(),
-            api_key: Some(api_key.to_string()),
-            mod_version,
+            mod_version: mod_version,
         }
     }
 }
@@ -35,7 +44,17 @@ impl Owner {
 pub struct RawOwner {
     pub id: i32,
     pub name: *const c_char,
-    pub mod_version: u32,
+    pub mod_version: i32,
+}
+
+impl From<SavedOwner> for RawOwner {
+    fn from(raw_owner: SavedOwner) -> Self {
+        Self {
+            id: raw_owner.id,
+            name: CString::new(raw_owner.name).unwrap_or_default().into_raw(),
+            mod_version: raw_owner.mod_version,
+        }
+    }
 }
 
 #[no_mangle]
@@ -43,7 +62,7 @@ pub extern "C" fn create_owner(
     api_url: *const c_char,
     api_key: *const c_char,
     name: *const c_char,
-    mod_version: u32,
+    mod_version: i32,
 ) -> FFIResult<RawOwner> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
@@ -53,55 +72,43 @@ pub extern "C" fn create_owner(
         api_url, api_key, name, mod_version
     );
 
-    fn inner(api_url: &str, api_key: &str, name: &str, mod_version: u32) -> Result<Owner> {
+    fn inner(api_url: &str, api_key: &str, name: &str, mod_version: i32) -> Result<SavedOwner> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join("v1/owners")?;
         #[cfg(test)]
         let url = Url::parse(&mockito::server_url())?.join("v1/owners")?;
 
-        let owner = Owner::from_game(name, api_key, mod_version);
+        let owner = Owner::from_game(name, mod_version);
         info!("created owner from game: {:?}", &owner);
-        if let Some(api_key) = &owner.api_key {
-            let client = reqwest::blocking::Client::new();
-            let resp = client
-                .post(url)
-                .header("Api-Key", api_key.clone())
-                .json(&owner)
-                .send()?;
-            info!("create owner response from api: {:?}", &resp);
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .post(url)
+            .header("Api-Key", api_key.clone())
+            .header("Content-Type", "application/octet-stream")
+            .body(bincode::serialize(&owner)?)
+            .send()?;
+        info!("create owner response from api: {:?}", &resp);
 
-            let cache_dir = file_cache_dir(api_url)?;
-            let headers = resp.headers().clone();
-            let bytes = resp.bytes()?;
-            let json: Owner = serde_json::from_slice(&bytes)?;
-            if let Some(id) = json.id {
-                let body_cache_path = cache_dir.join(format!("owner_{}.json", id));
-                let metadata_cache_path = cache_dir.join(format!("owner_{}_metadata.json", id));
-                update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
-            }
-            Ok(json)
+        let cache_dir = file_cache_dir(api_url)?;
+        let headers = resp.headers().clone();
+        let status = resp.status();
+        let bytes = resp.bytes()?;
+        if status.is_success() {
+            let saved_owner: SavedOwner = bincode::deserialize(&bytes)?;
+            let body_cache_path = cache_dir.join(format!("owner_{}.bin", saved_owner.id));
+            let metadata_cache_path =
+                cache_dir.join(format!("owner_{}_metadata.json", saved_owner.id));
+            update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
+            Ok(saved_owner)
         } else {
-            Err(anyhow!("api-key not defined"))
+            Err(extract_error_from_response(status, &bytes))
         }
     }
 
     match inner(&api_url, &api_key, &name, mod_version) {
         Ok(owner) => {
             info!("create_owner successful");
-            if let Some(id) = owner.id {
-                FFIResult::Ok(RawOwner {
-                    id,
-                    name: CString::new(owner.name).unwrap_or_default().into_raw(),
-                    mod_version: owner.mod_version,
-                })
-            } else {
-                error!("create_owner failed. API did not return an owner with an ID");
-                let err_string = CString::new("API did not return an owner with an ID".to_string())
-                    .expect("could not create CString")
-                    .into_raw();
-                // TODO: also need to drop this CString once C++ is done reading it
-                FFIResult::Err(err_string)
-            }
+            FFIResult::Ok(RawOwner::from(owner))
         }
         Err(err) => {
             error!("create_owner failed. {}", err);
@@ -118,9 +125,9 @@ pub extern "C" fn create_owner(
 pub extern "C" fn update_owner(
     api_url: *const c_char,
     api_key: *const c_char,
-    id: u32,
+    id: i32,
     name: *const c_char,
-    mod_version: u32,
+    mod_version: i32,
 ) -> FFIResult<RawOwner> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
@@ -130,53 +137,48 @@ pub extern "C" fn update_owner(
         api_url, api_key, name, mod_version
     );
 
-    fn inner(api_url: &str, api_key: &str, id: u32, name: &str, mod_version: u32) -> Result<Owner> {
+    fn inner(
+        api_url: &str,
+        api_key: &str,
+        id: i32,
+        name: &str,
+        mod_version: i32,
+    ) -> Result<SavedOwner> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join(&format!("v1/owners/{}", id))?;
         #[cfg(test)]
         let url = Url::parse(&mockito::server_url())?.join(&format!("v1/owners/{}", id))?;
 
-        let owner = Owner::from_game(name, api_key, mod_version);
+        let owner = Owner::from_game(name, mod_version);
         info!("created owner from game: {:?}", &owner);
-        if let Some(api_key) = &owner.api_key {
-            let client = reqwest::blocking::Client::new();
-            let resp = client
-                .patch(url)
-                .header("Api-Key", api_key.clone())
-                .json(&owner)
-                .send()?;
-            info!("update owner response from api: {:?}", &resp);
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .patch(url)
+            .header("Api-Key", api_key.clone())
+            .header("Content-Type", "application/octet-stream")
+            .body(bincode::serialize(&owner)?)
+            .send()?;
+        info!("update owner response from api: {:?}", &resp);
 
-            let cache_dir = file_cache_dir(api_url)?;
-            let body_cache_path = cache_dir.join(format!("owner_{}.json", id));
-            let metadata_cache_path = cache_dir.join(format!("owner_{}_metadata.json", id));
-            let headers = resp.headers().clone();
-            let bytes = resp.bytes()?;
-            let json: Owner = serde_json::from_slice(&bytes)?;
+        let cache_dir = file_cache_dir(api_url)?;
+        let body_cache_path = cache_dir.join(format!("owner_{}.bin", id));
+        let metadata_cache_path = cache_dir.join(format!("owner_{}_metadata.json", id));
+        let headers = resp.headers().clone();
+        let status = resp.status();
+        let bytes = resp.bytes()?;
+        if status.is_success() {
+            let saved_owner: SavedOwner = bincode::deserialize(&bytes)?;
             update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
-            Ok(json)
+            Ok(saved_owner)
         } else {
-            Err(anyhow!("api-key not defined"))
+            Err(extract_error_from_response(status, &bytes))
         }
     }
 
     match inner(&api_url, &api_key, id, &name, mod_version) {
         Ok(owner) => {
             info!("update_owner successful");
-            if let Some(id) = owner.id {
-                FFIResult::Ok(RawOwner {
-                    id,
-                    name: CString::new(owner.name).unwrap_or_default().into_raw(),
-                    mod_version: owner.mod_version,
-                })
-            } else {
-                error!("update_owner failed. API did not return an owner with an ID");
-                let err_string = CString::new("API did not return an owner with an ID".to_string())
-                    .expect("could not create CString")
-                    .into_raw();
-                // TODO: also need to drop this CString once C++ is done reading it
-                FFIResult::Err(err_string)
-            }
+            FFIResult::Ok(RawOwner::from(owner))
         }
         Err(err) => {
             error!("update_owner failed. {}", err);
@@ -194,14 +196,22 @@ mod tests {
     use std::ffi::CString;
 
     use super::*;
+    use chrono::Utc;
     use mockito::mock;
 
     #[test]
     fn test_create_owner() {
+        let example = SavedOwner {
+            id: 1,
+            name: "name".to_string(),
+            mod_version: 1,
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
         let mock = mock("POST", "/v1/owners")
             .with_status(201)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{ "created_at": "2020-08-18T00:00:00.000", "id": 1, "name": "name", "mod_version": 1, "updated_at": "2020-08-18T00:00:00.000" }"#)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(bincode::serialize(&example).unwrap())
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -245,7 +255,7 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "expected value at line 1 column 1"
+                    "Server 500: Internal Server Error"
                 );
             }
         }
@@ -253,10 +263,17 @@ mod tests {
 
     #[test]
     fn test_update_owner() {
+        let example = SavedOwner {
+            id: 1,
+            name: "name".to_string(),
+            mod_version: 1,
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
         let mock = mock("PATCH", "/v1/owners/1")
             .with_status(201)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{ "created_at": "2020-08-18T00:00:00.000", "id": 1, "name": "name", "mod_version": 1, "updated_at": "2020-08-18T00:00:00.000" }"#)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(bincode::serialize(&example).unwrap())
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -300,7 +317,7 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "expected value at line 1 column 1"
+                    "Server 500: Internal Server Error"
                 );
             }
         }

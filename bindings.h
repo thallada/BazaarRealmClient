@@ -86,7 +86,7 @@ struct RawMerchandise {
 struct RawOwner {
   int32_t id;
   const char *name;
-  uint32_t mod_version;
+  int32_t mod_version;
 };
 
 struct RawShop {
@@ -96,17 +96,17 @@ struct RawShop {
 };
 
 struct RawTransaction {
-  uint32_t id;
-  uint32_t shop_id;
+  int32_t id;
+  int32_t shop_id;
   const char *mod_name;
-  uint32_t local_form_id;
+  int32_t local_form_id;
   const char *name;
-  uint32_t form_type;
+  int32_t form_type;
   bool is_food;
-  uint32_t price;
+  int32_t price;
   bool is_sell;
-  uint32_t quantity;
-  uint32_t amount;
+  int32_t quantity;
+  int32_t amount;
 };
 
 struct RawInteriorRefVec {
@@ -161,7 +161,7 @@ FFIResult<int32_t> create_merchandise_list(const char *api_url,
 FFIResult<RawOwner> create_owner(const char *api_url,
                                  const char *api_key,
                                  const char *name,
-                                 uint32_t mod_version);
+                                 int32_t mod_version);
 
 FFIResult<RawShop> create_shop(const char *api_url,
                                const char *api_key,
@@ -214,9 +214,9 @@ FFIResult<int32_t> update_merchandise_list(const char *api_url,
 
 FFIResult<RawOwner> update_owner(const char *api_url,
                                  const char *api_key,
-                                 uint32_t id,
+                                 int32_t id,
                                  const char *name,
-                                 uint32_t mod_version);
+                                 int32_t mod_version);
 
 FFIResult<RawShop> update_shop(const char *api_url,
                                const char *api_key,

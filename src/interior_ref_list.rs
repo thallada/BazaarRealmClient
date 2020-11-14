@@ -1,6 +1,7 @@
 use std::{ffi::CStr, ffi::CString, os::raw::c_char, slice};
 
 use anyhow::Result;
+use chrono::NaiveDateTime;
 use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +12,8 @@ use std::{println as info, println as error};
 
 use crate::{
     cache::file_cache_dir, cache::from_file_cache, cache::load_metadata_from_file_cache,
-    cache::update_file_caches, log_server_error, result::FFIResult,
+    cache::update_file_caches, error::extract_error_from_response, log_server_error,
+    result::FFIResult,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -24,9 +26,9 @@ pub struct InteriorRefList {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct InteriorRef {
     pub base_mod_name: String,
-    pub base_local_form_id: i32,
+    pub base_local_form_id: u32,
     pub ref_mod_name: Option<String>,
-    pub ref_local_form_id: i32,
+    pub ref_local_form_id: u32,
     pub position_x: f32,
     pub position_y: f32,
     pub position_z: f32,
@@ -47,7 +49,7 @@ impl InteriorRefList {
                     base_mod_name: unsafe { CStr::from_ptr(rec.base_mod_name) }
                         .to_string_lossy()
                         .to_string(),
-                    base_local_form_id: rec.base_local_form_id as i32,
+                    base_local_form_id: rec.base_local_form_id,
                     ref_mod_name: match rec.ref_mod_name.is_null() {
                         true => None,
                         false => Some(
@@ -56,7 +58,7 @@ impl InteriorRefList {
                                 .to_string(),
                         ),
                     },
-                    ref_local_form_id: rec.ref_local_form_id as i32,
+                    ref_local_form_id: rec.ref_local_form_id,
                     position_x: rec.position_x,
                     position_y: rec.position_y,
                     position_z: rec.position_z,
@@ -68,6 +70,16 @@ impl InteriorRefList {
                 .collect(),
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SavedInteriorRefList {
+    pub id: i32,
+    pub shop_id: i32,
+    pub owner_id: i32,
+    pub ref_list: Vec<InteriorRef>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
 }
 
 #[derive(Debug)]
@@ -84,6 +96,29 @@ pub struct RawInteriorRef {
     pub angle_y: f32,
     pub angle_z: f32,
     pub scale: u16,
+}
+
+impl From<InteriorRef> for RawInteriorRef {
+    fn from(interior_ref: InteriorRef) -> Self {
+        Self {
+            base_mod_name: CString::new(interior_ref.base_mod_name)
+                .unwrap_or_default()
+                .into_raw(),
+            base_local_form_id: interior_ref.base_local_form_id,
+            ref_mod_name: match interior_ref.ref_mod_name {
+                None => std::ptr::null(),
+                Some(ref_mod_name) => CString::new(ref_mod_name).unwrap_or_default().into_raw(),
+            },
+            ref_local_form_id: interior_ref.ref_local_form_id,
+            position_x: interior_ref.position_x,
+            position_y: interior_ref.position_y,
+            position_z: interior_ref.position_z,
+            angle_x: interior_ref.angle_x,
+            angle_y: interior_ref.angle_y,
+            angle_z: interior_ref.angle_z,
+            scale: interior_ref.scale,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -116,7 +151,7 @@ pub extern "C" fn create_interior_ref_list(
         api_key: &str,
         shop_id: i32,
         raw_interior_ref_slice: &[RawInteriorRef],
-    ) -> Result<InteriorRefList> {
+    ) -> Result<SavedInteriorRefList> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join("v1/interior_ref_lists")?;
         #[cfg(test)]
@@ -131,37 +166,34 @@ pub extern "C" fn create_interior_ref_list(
         let resp = client
             .post(url)
             .header("Api-Key", api_key)
-            .json(&interior_ref_list)
+            .header("Content-Type", "application/octet-stream")
+            .body(bincode::serialize(&interior_ref_list)?)
             .send()?;
         info!("create interior_ref_list response from api: {:?}", &resp);
 
         let cache_dir = file_cache_dir(api_url)?;
         let headers = resp.headers().clone();
+        let status = resp.status();
         let bytes = resp.bytes()?;
-        let json: InteriorRefList = serde_json::from_slice(&bytes)?;
-        if let Some(id) = json.id {
-            let body_cache_path = cache_dir.join(format!("interior_ref_list_{}.json", id));
-            let metadata_cache_path =
-                cache_dir.join(format!("interior_ref_list_{}_metadata.json", id));
+        if status.is_success() {
+            let saved_interior_ref_list: SavedInteriorRefList = bincode::deserialize(&bytes)?;
+            let body_cache_path = cache_dir.join(format!(
+                "interior_ref_list_{}.bin",
+                saved_interior_ref_list.id
+            ));
+            let metadata_cache_path = cache_dir.join(format!(
+                "interior_ref_list_{}_metadata.json",
+                saved_interior_ref_list.id
+            ));
             update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
+            Ok(saved_interior_ref_list)
+        } else {
+            Err(extract_error_from_response(status, &bytes))
         }
-        Ok(json)
     }
 
     match inner(&api_url, &api_key, shop_id, raw_interior_ref_slice) {
-        Ok(interior_ref_list) => {
-            if let Some(id) = interior_ref_list.id {
-                FFIResult::Ok(id)
-            } else {
-                error!("create_interior_ref_list failed. API did not return an interior ref list with an ID");
-                let err_string =
-                    CString::new("API did not return an interior ref list with an ID".to_string())
-                        .expect("could not create CString")
-                        .into_raw();
-                // TODO: also need to drop this CString once C++ is done reading it
-                FFIResult::Err(err_string)
-            }
-        }
+        Ok(interior_ref_list) => FFIResult::Ok(interior_ref_list.id),
         Err(err) => {
             error!("create_interior_ref_list failed. {}", err);
             // TODO: also need to drop this CString once C++ is done reading it
@@ -194,7 +226,7 @@ pub extern "C" fn update_interior_ref_list(
         api_key: &str,
         shop_id: i32,
         raw_interior_ref_slice: &[RawInteriorRef],
-    ) -> Result<InteriorRefList> {
+    ) -> Result<SavedInteriorRefList> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join(&format!("v1/shops/{}/interior_ref_list", shop_id))?;
         #[cfg(test)]
@@ -210,35 +242,29 @@ pub extern "C" fn update_interior_ref_list(
         let resp = client
             .patch(url)
             .header("Api-Key", api_key)
-            .json(&interior_ref_list)
+            .header("Content-Type", "application/octet-stream")
+            .body(bincode::serialize(&interior_ref_list)?)
             .send()?;
         info!("update interior_ref_list response from api: {:?}", &resp);
 
         let cache_dir = file_cache_dir(api_url)?;
-        let body_cache_path = cache_dir.join(format!("shop_{}_interior_ref_list.json", shop_id));
+        let body_cache_path = cache_dir.join(format!("shop_{}_interior_ref_list.bin", shop_id));
         let metadata_cache_path =
             cache_dir.join(format!("shop_{}_interior_ref_list_metadata.json", shop_id));
         let headers = resp.headers().clone();
+        let status = resp.status();
         let bytes = resp.bytes()?;
-        let json: InteriorRefList = serde_json::from_slice(&bytes)?;
-        update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
-        Ok(json)
+        if status.is_success() {
+            let saved_interior_ref_list: SavedInteriorRefList = bincode::deserialize(&bytes)?;
+            update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
+            Ok(saved_interior_ref_list)
+        } else {
+            Err(extract_error_from_response(status, &bytes))
+        }
     }
 
     match inner(&api_url, &api_key, shop_id, raw_interior_ref_slice) {
-        Ok(interior_ref_list) => {
-            if let Some(id) = interior_ref_list.id {
-                FFIResult::Ok(id)
-            } else {
-                error!("update_interior_ref_list failed. API did not return an interior ref list with an ID");
-                let err_string =
-                    CString::new("API did not return an interior ref list with an ID".to_string())
-                        .expect("could not create CString")
-                        .into_raw();
-                // TODO: also need to drop this CString once C++ is done reading it
-                FFIResult::Err(err_string)
-            }
-        }
+        Ok(interior_ref_list) => FFIResult::Ok(interior_ref_list.id),
         Err(err) => {
             error!("update_interior_ref_list failed. {}", err);
             // TODO: also need to drop this CString once C++ is done reading it
@@ -264,7 +290,11 @@ pub extern "C" fn get_interior_ref_list(
         api_url, api_key, interior_ref_list_id
     );
 
-    fn inner(api_url: &str, api_key: &str, interior_ref_list_id: i32) -> Result<InteriorRefList> {
+    fn inner(
+        api_url: &str,
+        api_key: &str,
+        interior_ref_list_id: i32,
+    ) -> Result<SavedInteriorRefList> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?
             .join(&format!("v1/interior_ref_lists/{}", interior_ref_list_id))?;
@@ -276,12 +306,15 @@ pub extern "C" fn get_interior_ref_list(
         let client = reqwest::blocking::Client::new();
         let cache_dir = file_cache_dir(api_url)?;
         let body_cache_path =
-            cache_dir.join(format!("interior_ref_list_{}.json", interior_ref_list_id));
+            cache_dir.join(format!("interior_ref_list_{}.bin", interior_ref_list_id));
         let metadata_cache_path = cache_dir.join(format!(
             "interior_ref_list_{}_metadata.json",
             interior_ref_list_id
         ));
-        let mut request = client.get(url).header("Api-Key", api_key);
+        let mut request = client
+            .get(url)
+            .header("Api-Key", api_key)
+            .header("Accept", "application/octet-stream");
         // TODO: load metadata from in-memory LRU cache first before trying to load from file
         if let Ok(metadata) = load_metadata_from_file_cache(&metadata_cache_path) {
             if let Some(etag) = metadata.etag {
@@ -295,9 +328,9 @@ pub extern "C" fn get_interior_ref_list(
                 if resp.status().is_success() {
                     let headers = resp.headers().clone();
                     let bytes = resp.bytes()?;
-                    let json = serde_json::from_slice(&bytes)?;
+                    let saved_interior_ref_list = bincode::deserialize(&bytes)?;
                     update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
-                    Ok(json)
+                    Ok(saved_interior_ref_list)
                 } else if resp.status() == StatusCode::NOT_MODIFIED {
                     from_file_cache(&body_cache_path)
                 } else {
@@ -317,26 +350,7 @@ pub extern "C" fn get_interior_ref_list(
             let (ptr, len, cap) = interior_ref_list
                 .ref_list
                 .into_iter()
-                .map(|interior_ref| RawInteriorRef {
-                    base_mod_name: CString::new(interior_ref.base_mod_name)
-                        .unwrap_or_default()
-                        .into_raw(),
-                    base_local_form_id: interior_ref.base_local_form_id as u32,
-                    ref_mod_name: match interior_ref.ref_mod_name {
-                        None => std::ptr::null(),
-                        Some(ref_mod_name) => {
-                            CString::new(ref_mod_name).unwrap_or_default().into_raw()
-                        }
-                    },
-                    ref_local_form_id: interior_ref.ref_local_form_id as u32,
-                    position_x: interior_ref.position_x,
-                    position_y: interior_ref.position_y,
-                    position_z: interior_ref.position_z,
-                    angle_x: interior_ref.angle_x,
-                    angle_y: interior_ref.angle_y,
-                    angle_z: interior_ref.angle_z,
-                    scale: interior_ref.scale,
-                })
+                .map(RawInteriorRef::from)
                 .collect::<Vec<RawInteriorRef>>()
                 .into_raw_parts();
             // TODO: need to pass this back into Rust once C++ is done with it so it can be manually dropped and the CStrings dropped from raw pointers.
@@ -367,7 +381,7 @@ pub extern "C" fn get_interior_ref_list_by_shop_id(
         api_url, api_key, shop_id
     );
 
-    fn inner(api_url: &str, api_key: &str, shop_id: i32) -> Result<InteriorRefList> {
+    fn inner(api_url: &str, api_key: &str, shop_id: i32) -> Result<SavedInteriorRefList> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join(&format!("v1/shops/{}/interior_ref_list", shop_id))?;
         #[cfg(test)]
@@ -377,10 +391,13 @@ pub extern "C" fn get_interior_ref_list_by_shop_id(
 
         let client = reqwest::blocking::Client::new();
         let cache_dir = file_cache_dir(api_url)?;
-        let body_cache_path = cache_dir.join(format!("shop_{}_interior_ref_list.json", shop_id));
+        let body_cache_path = cache_dir.join(format!("shop_{}_interior_ref_list.bin", shop_id));
         let metadata_cache_path =
             cache_dir.join(format!("shop_{}_interior_ref_list_metadata.json", shop_id));
-        let mut request = client.get(url).header("Api-Key", api_key);
+        let mut request = client
+            .get(url)
+            .header("Api-Key", api_key)
+            .header("Accept", "application/octet-stream");
         // TODO: load metadata from in-memory LRU cache first before trying to load from file
         if let Ok(metadata) = load_metadata_from_file_cache(&metadata_cache_path) {
             if let Some(etag) = metadata.etag {
@@ -397,9 +414,9 @@ pub extern "C" fn get_interior_ref_list_by_shop_id(
                 if resp.status().is_success() {
                     let headers = resp.headers().clone();
                     let bytes = resp.bytes()?;
-                    let json = serde_json::from_slice(&bytes)?;
+                    let saved_interior_ref_list = bincode::deserialize(&bytes)?;
                     update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
-                    Ok(json)
+                    Ok(saved_interior_ref_list)
                 } else if resp.status() == StatusCode::NOT_MODIFIED {
                     from_file_cache(&body_cache_path)
                 } else {
@@ -422,26 +439,7 @@ pub extern "C" fn get_interior_ref_list_by_shop_id(
             let (ptr, len, cap) = interior_ref_list
                 .ref_list
                 .into_iter()
-                .map(|interior_ref| RawInteriorRef {
-                    base_mod_name: CString::new(interior_ref.base_mod_name)
-                        .unwrap_or_default()
-                        .into_raw(),
-                    base_local_form_id: interior_ref.base_local_form_id as u32,
-                    ref_mod_name: match interior_ref.ref_mod_name {
-                        None => std::ptr::null(),
-                        Some(ref_mod_name) => {
-                            CString::new(ref_mod_name).unwrap_or_default().into_raw()
-                        }
-                    },
-                    ref_local_form_id: interior_ref.ref_local_form_id as u32,
-                    position_x: interior_ref.position_x,
-                    position_y: interior_ref.position_y,
-                    position_z: interior_ref.position_z,
-                    angle_x: interior_ref.angle_x,
-                    angle_y: interior_ref.angle_y,
-                    angle_z: interior_ref.angle_z,
-                    scale: interior_ref.scale,
-                })
+                .map(RawInteriorRef::from)
                 .collect::<Vec<RawInteriorRef>>()
                 .into_raw_parts();
             // TODO: need to pass this back into Rust once C++ is done with it so it can be manually dropped and the CStrings dropped from raw pointers.
@@ -464,14 +462,35 @@ mod tests {
     use std::ffi::CString;
 
     use super::*;
+    use chrono::Utc;
     use mockito::mock;
 
     #[test]
     fn test_create_interior_ref_list() {
+        let example = SavedInteriorRefList {
+            id: 1,
+            owner_id: 1,
+            shop_id: 1,
+            ref_list: vec![InteriorRef {
+                base_mod_name: "Skyrim.esm".to_string(),
+                base_local_form_id: 1,
+                ref_mod_name: Some("BazaarRealm.esp".to_string()),
+                ref_local_form_id: 1,
+                position_x: 100.,
+                position_y: 0.,
+                position_z: 100.,
+                angle_x: 0.,
+                angle_y: 0.,
+                angle_z: 0.,
+                scale: 1,
+            }],
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
         let mock = mock("POST", "/v1/interior_ref_lists")
             .with_status(201)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{ "created_at": "2020-08-18T00:00:00.000", "id": 1, "shop_id": 1, "ref_list": [], "updated_at": "2020-08-18T00:00:00.000" }"#)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(bincode::serialize(&example).unwrap())
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -537,7 +556,7 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "expected value at line 1 column 1"
+                    "Server 500: Internal Server Error"
                 );
             }
         }
@@ -545,10 +564,30 @@ mod tests {
 
     #[test]
     fn test_update_interior_ref_list() {
+        let example = SavedInteriorRefList {
+            id: 1,
+            owner_id: 1,
+            shop_id: 1,
+            ref_list: vec![InteriorRef {
+                base_mod_name: "Skyrim.esm".to_string(),
+                base_local_form_id: 1,
+                ref_mod_name: Some("BazaarRealm.esp".to_string()),
+                ref_local_form_id: 1,
+                position_x: 100.,
+                position_y: 0.,
+                position_z: 100.,
+                angle_x: 0.,
+                angle_y: 0.,
+                angle_z: 0.,
+                scale: 1,
+            }],
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
         let mock = mock("PATCH", "/v1/shops/1/interior_ref_list")
             .with_status(201)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{ "created_at": "2020-08-18T00:00:00.000", "id": 1, "shop_id": 1, "ref_list": [], "updated_at": "2020-08-18T00:00:00.000" }"#)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(bincode::serialize(&example).unwrap())
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -614,7 +653,7 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "expected value at line 1 column 1"
+                    "Server 500: Internal Server Error"
                 );
             }
         }
@@ -622,32 +661,30 @@ mod tests {
 
     #[test]
     fn test_get_interior_ref_list() {
+        let example = SavedInteriorRefList {
+            id: 1,
+            owner_id: 1,
+            shop_id: 1,
+            ref_list: vec![InteriorRef {
+                base_mod_name: "Skyrim.esm".to_string(),
+                base_local_form_id: 1,
+                ref_mod_name: Some("BazaarRealm.esp".to_string()),
+                ref_local_form_id: 1,
+                position_x: 100.,
+                position_y: 0.,
+                position_z: 100.,
+                angle_x: 0.,
+                angle_y: 0.,
+                angle_z: 0.,
+                scale: 1,
+            }],
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
         let mock = mock("GET", "/v1/interior_ref_lists/1")
             .with_status(201)
-            .with_header("content-type", "application/json")
-            .with_body(
-                r#"{
-                "created_at": "2020-08-18T00:00:00.000",
-                "id": 1,
-                "shop_id": 1,
-                "ref_list": [
-                    {
-                        "base_mod_name": "Skyrim.esm",
-                        "base_local_form_id": 1,
-                        "ref_mod_name": "BazaarRealm.esp",
-                        "ref_local_form_id": 1,
-                        "position_x": 100.0,
-                        "position_y": 0.0,
-                        "position_z": 100.0,
-                        "angle_x": 0.0,
-                        "angle_y": 0.0,
-                        "angle_z": 0.0,
-                        "scale": 1
-                    }
-                ],
-                "updated_at": "2020-08-18T00:00:00.000"
-            }"#,
-            )
+            .with_header("content-type", "application/octet-stream")
+            .with_body(bincode::serialize(&example).unwrap())
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -709,7 +746,7 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "EOF while parsing a value at line 1 column 0" // empty tempfile
+                    "io error: failed to fill whole buffer" // empty tempfile
                 );
             }
         }
@@ -717,32 +754,30 @@ mod tests {
 
     #[test]
     fn test_get_interior_ref_list_by_shop_id() {
+        let example = SavedInteriorRefList {
+            id: 1,
+            owner_id: 1,
+            shop_id: 1,
+            ref_list: vec![InteriorRef {
+                base_mod_name: "Skyrim.esm".to_string(),
+                base_local_form_id: 1,
+                ref_mod_name: Some("BazaarRealm.esp".to_string()),
+                ref_local_form_id: 1,
+                position_x: 100.,
+                position_y: 0.,
+                position_z: 100.,
+                angle_x: 0.,
+                angle_y: 0.,
+                angle_z: 0.,
+                scale: 1,
+            }],
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
         let mock = mock("GET", "/v1/shops/1/interior_ref_list")
             .with_status(201)
-            .with_header("content-type", "application/json")
-            .with_body(
-                r#"{
-                "created_at": "2020-08-18T00:00:00.000",
-                "id": 1,
-                "shop_id": 1,
-                "ref_list": [
-                    {
-                        "base_mod_name": "Skyrim.esm",
-                        "base_local_form_id": 1,
-                        "ref_mod_name": "BazaarRealm.esp",
-                        "ref_local_form_id": 1,
-                        "position_x": 100.0,
-                        "position_y": 0.0,
-                        "position_z": 100.0,
-                        "angle_x": 0.0,
-                        "angle_y": 0.0,
-                        "angle_z": 0.0,
-                        "scale": 1
-                    }
-                ],
-                "updated_at": "2020-08-18T00:00:00.000"
-            }"#,
-            )
+            .with_header("content-type", "application/octet-stream")
+            .with_body(bincode::serialize(&example).unwrap())
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -805,7 +840,7 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "EOF while parsing a value at line 1 column 0" // empty tempfile
+                    "io error: failed to fill whole buffer" // empty tempfile
                 );
             }
         }

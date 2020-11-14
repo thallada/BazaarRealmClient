@@ -1,6 +1,7 @@
 use std::{ffi::CStr, ffi::CString, os::raw::c_char, slice};
 
 use anyhow::Result;
+use chrono::NaiveDateTime;
 use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 
@@ -11,13 +12,14 @@ use std::{println as info, println as error};
 
 use crate::{
     cache::file_cache_dir, cache::from_file_cache, cache::load_metadata_from_file_cache,
-    cache::update_file_caches, log_server_error, result::FFIResult,
+    cache::update_file_caches, error::extract_error_from_response, log_server_error,
+    result::FFIResult,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MerchandiseList {
-    pub id: Option<i32>,
     pub shop_id: i32,
+    pub owner_id: Option<i32>,
     pub form_list: Vec<Merchandise>,
 }
 
@@ -35,8 +37,8 @@ pub struct Merchandise {
 impl MerchandiseList {
     pub fn from_game(shop_id: i32, merch_records: &[RawMerchandise]) -> Self {
         Self {
-            id: None,
             shop_id,
+            owner_id: None,
             form_list: merch_records
                 .iter()
                 .map(|rec| Merchandise {
@@ -55,6 +57,16 @@ impl MerchandiseList {
                 .collect(),
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SavedMerchandiseList {
+    pub id: i32,
+    pub shop_id: i32,
+    pub owner_id: i32,
+    pub form_list: Vec<Merchandise>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
 }
 
 #[derive(Debug)]
@@ -99,7 +111,7 @@ pub extern "C" fn create_merchandise_list(
         api_key: &str,
         shop_id: i32,
         raw_merchandise_slice: &[RawMerchandise],
-    ) -> Result<MerchandiseList> {
+    ) -> Result<SavedMerchandiseList> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join("v1/merchandise_lists")?;
         #[cfg(test)]
@@ -114,39 +126,34 @@ pub extern "C" fn create_merchandise_list(
         let resp = client
             .post(url)
             .header("Api-Key", api_key)
-            .json(&merchandise_list)
+            .header("Content-Type", "application/octet-stream")
+            .body(bincode::serialize(&merchandise_list)?)
             .send()?;
         info!("create merchandise_list response from api: {:?}", &resp);
 
         let cache_dir = file_cache_dir(api_url)?;
         let headers = resp.headers().clone();
+        let status = resp.status();
         let bytes = resp.bytes()?;
-        let json: MerchandiseList = serde_json::from_slice(&bytes)?;
-        if let Some(id) = json.id {
-            let body_cache_path = cache_dir.join(format!("merchandise_list_{}.json", id));
-            let metadata_cache_path =
-                cache_dir.join(format!("merchandise_list_{}_metadata.json", id));
+        if status.is_success() {
+            let saved_merchandise_list: SavedMerchandiseList = bincode::deserialize(&bytes)?;
+            let body_cache_path = cache_dir.join(format!(
+                "merchandise_list_{}.bin",
+                saved_merchandise_list.id
+            ));
+            let metadata_cache_path = cache_dir.join(format!(
+                "merchandise_list_{}_metadata.json",
+                saved_merchandise_list.id
+            ));
             update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
+            Ok(saved_merchandise_list)
+        } else {
+            Err(extract_error_from_response(status, &bytes))
         }
-        Ok(json)
     }
 
     match inner(&api_url, &api_key, shop_id, raw_merchandise_slice) {
-        Ok(merchandise_list) => {
-            if let Some(id) = merchandise_list.id {
-                FFIResult::Ok(id)
-            } else {
-                error!(
-                    "create_merchandise failed. API did not return an interior ref list with an ID"
-                );
-                let err_string =
-                    CString::new("API did not return an interior ref list with an ID".to_string())
-                        .expect("could not create CString")
-                        .into_raw();
-                // TODO: also need to drop this CString once C++ is done reading it
-                FFIResult::Err(err_string)
-            }
-        }
+        Ok(merchandise_list) => FFIResult::Ok(merchandise_list.id),
         Err(err) => {
             error!("create_merchandise_list failed. {}", err);
             // TODO: also need to drop this CString once C++ is done reading it
@@ -179,7 +186,7 @@ pub extern "C" fn update_merchandise_list(
         api_key: &str,
         shop_id: i32,
         raw_merchandise_slice: &[RawMerchandise],
-    ) -> Result<MerchandiseList> {
+    ) -> Result<SavedMerchandiseList> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join(&format!("v1/shops/{}/merchandise_list", shop_id))?;
         #[cfg(test)]
@@ -195,37 +202,29 @@ pub extern "C" fn update_merchandise_list(
         let resp = client
             .patch(url)
             .header("Api-Key", api_key)
-            .json(&merchandise_list)
+            .header("Content-Type", "application/octet-stream")
+            .body(bincode::serialize(&merchandise_list)?)
             .send()?;
         info!("update merchandise_list response from api: {:?}", &resp);
 
         let cache_dir = file_cache_dir(api_url)?;
-        let body_cache_path = cache_dir.join(format!("shop_{}_merchandise_list.json", shop_id));
+        let body_cache_path = cache_dir.join(format!("shop_{}_merchandise_list.bin", shop_id));
         let metadata_cache_path =
             cache_dir.join(format!("shop_{}_merchandise_list_metadata.json", shop_id));
         let headers = resp.headers().clone();
+        let status = resp.status();
         let bytes = resp.bytes()?;
-        let json: MerchandiseList = serde_json::from_slice(&bytes)?;
-        update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
-        Ok(json)
+        if status.is_success() {
+            let saved_merchandise_list = bincode::deserialize(&bytes)?;
+            update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
+            Ok(saved_merchandise_list)
+        } else {
+            Err(extract_error_from_response(status, &bytes))
+        }
     }
 
     match inner(&api_url, &api_key, shop_id, raw_merchandise_slice) {
-        Ok(merchandise_list) => {
-            if let Some(id) = merchandise_list.id {
-                FFIResult::Ok(id)
-            } else {
-                error!(
-                    "update_merchandise failed. API did not return a merchandise list with an ID"
-                );
-                let err_string =
-                    CString::new("API did not return a merchandise list with an ID".to_string())
-                        .expect("could not create CString")
-                        .into_raw();
-                // TODO: also need to drop this CString once C++ is done reading it
-                FFIResult::Err(err_string)
-            }
-        }
+        Ok(merchandise_list) => FFIResult::Ok(merchandise_list.id),
         Err(err) => {
             error!("update_merchandise_list failed. {}", err);
             // TODO: also need to drop this CString once C++ is done reading it
@@ -252,7 +251,11 @@ pub extern "C" fn get_merchandise_list(
         api_url, api_key, merchandise_list_id
     );
 
-    fn inner(api_url: &str, api_key: &str, merchandise_list_id: i32) -> Result<MerchandiseList> {
+    fn inner(
+        api_url: &str,
+        api_key: &str,
+        merchandise_list_id: i32,
+    ) -> Result<SavedMerchandiseList> {
         #[cfg(not(test))]
         let url =
             Url::parse(api_url)?.join(&format!("v1/merchandise_lists/{}", merchandise_list_id))?;
@@ -264,12 +267,15 @@ pub extern "C" fn get_merchandise_list(
         let client = reqwest::blocking::Client::new();
         let cache_dir = file_cache_dir(api_url)?;
         let body_cache_path =
-            cache_dir.join(format!("merchandise_list_{}.json", merchandise_list_id));
+            cache_dir.join(format!("merchandise_list_{}.bin", merchandise_list_id));
         let metadata_cache_path = cache_dir.join(format!(
             "merchandise_list_{}_metadata.json",
             merchandise_list_id
         ));
-        let mut request = client.get(url).header("Api-Key", api_key);
+        let mut request = client
+            .get(url)
+            .header("Api-Key", api_key)
+            .header("Accept", "application/octet-stream");
         // TODO: load metadata from in-memory LRU cache first before trying to load from file
         if let Ok(metadata) = load_metadata_from_file_cache(&metadata_cache_path) {
             if let Some(etag) = metadata.etag {
@@ -283,9 +289,9 @@ pub extern "C" fn get_merchandise_list(
                 if resp.status().is_success() {
                     let headers = resp.headers().clone();
                     let bytes = resp.bytes()?;
-                    let json = serde_json::from_slice(&bytes)?;
+                    let saved_merchandise_list = bincode::deserialize(&bytes)?;
                     update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
-                    Ok(json)
+                    Ok(saved_merchandise_list)
                 } else if resp.status() == StatusCode::NOT_MODIFIED {
                     from_file_cache(&body_cache_path)
                 } else {
@@ -348,7 +354,7 @@ pub extern "C" fn get_merchandise_list_by_shop_id(
         api_url, api_key, shop_id
     );
 
-    fn inner(api_url: &str, api_key: &str, shop_id: i32) -> Result<MerchandiseList> {
+    fn inner(api_url: &str, api_key: &str, shop_id: i32) -> Result<SavedMerchandiseList> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join(&format!("v1/shops/{}/merchandise_list", shop_id))?;
         #[cfg(test)]
@@ -358,10 +364,13 @@ pub extern "C" fn get_merchandise_list_by_shop_id(
 
         let client = reqwest::blocking::Client::new();
         let cache_dir = file_cache_dir(api_url)?;
-        let body_cache_path = cache_dir.join(format!("shop_{}_merchandise_list.json", shop_id));
+        let body_cache_path = cache_dir.join(format!("shop_{}_merchandise_list.bin", shop_id));
         let metadata_cache_path =
             cache_dir.join(format!("shop_{}_merchandise_list_metadata.json", shop_id));
-        let mut request = client.get(url).header("Api-Key", api_key);
+        let mut request = client
+            .get(url)
+            .header("Api-Key", api_key)
+            .header("Accept", "application/octet-stream");
         // TODO: load metadata from in-memory LRU cache first before trying to load from file
         if let Ok(metadata) = load_metadata_from_file_cache(&metadata_cache_path) {
             if let Some(etag) = metadata.etag {
@@ -378,9 +387,9 @@ pub extern "C" fn get_merchandise_list_by_shop_id(
                 if resp.status().is_success() {
                     let headers = resp.headers().clone();
                     let bytes = resp.bytes()?;
-                    let json = serde_json::from_slice(&bytes)?;
+                    let saved_merchandise_list = bincode::deserialize(&bytes)?;
                     update_file_caches(body_cache_path, metadata_cache_path, bytes, headers);
-                    Ok(json)
+                    Ok(saved_merchandise_list)
                 } else if resp.status() == StatusCode::NOT_MODIFIED {
                     from_file_cache(&body_cache_path)
                 } else {
@@ -435,14 +444,31 @@ mod tests {
     use std::ffi::CString;
 
     use super::*;
+    use chrono::Utc;
     use mockito::mock;
 
     #[test]
     fn test_create_merchandise_list() {
+        let example = SavedMerchandiseList {
+            id: 1,
+            shop_id: 1,
+            owner_id: 1,
+            form_list: vec![Merchandise {
+                mod_name: "Skyrim.esm".to_string(),
+                local_form_id: 1,
+                name: "Iron Sword".to_string(),
+                quantity: 1,
+                form_type: 1,
+                is_food: false,
+                price: 100,
+            }],
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
         let mock = mock("POST", "/v1/merchandise_lists")
             .with_status(201)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{ "created_at": "2020-08-18T00:00:00.000", "id": 1, "shop_id": 1, "form_list": [], "updated_at": "2020-08-18T00:00:00.000" }"#)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(bincode::serialize(&example).unwrap())
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -500,7 +526,7 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "expected value at line 1 column 1"
+                    "Server 500: Internal Server Error"
                 );
             }
         }
@@ -508,10 +534,26 @@ mod tests {
 
     #[test]
     fn test_update_merchandise_list() {
+        let example = SavedMerchandiseList {
+            id: 1,
+            shop_id: 1,
+            owner_id: 1,
+            form_list: vec![Merchandise {
+                mod_name: "Skyrim.esm".to_string(),
+                local_form_id: 1,
+                name: "Iron Sword".to_string(),
+                quantity: 1,
+                form_type: 1,
+                is_food: false,
+                price: 100,
+            }],
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
         let mock = mock("PATCH", "/v1/shops/1/merchandise_list")
             .with_status(201)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{ "created_at": "2020-08-18T00:00:00.000", "id": 1, "shop_id": 1, "form_list": [], "updated_at": "2020-08-18T00:00:00.000" }"#)
+            .with_header("content-type", "application/octet-stream")
+            .with_body(bincode::serialize(&example).unwrap())
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -569,35 +611,33 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "expected value at line 1 column 1"
+                    "Server 500: Internal Server Error"
                 );
             }
         }
     }
     #[test]
     fn test_get_merchandise_list() {
+        let example = SavedMerchandiseList {
+            id: 1,
+            owner_id: 1,
+            shop_id: 1,
+            form_list: vec![Merchandise {
+                mod_name: "Skyrim.esm".to_string(),
+                local_form_id: 1,
+                name: "Iron Sword".to_string(),
+                quantity: 1,
+                form_type: 1,
+                is_food: false,
+                price: 100,
+            }],
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
         let mock = mock("GET", "/v1/merchandise_lists/1")
             .with_status(201)
-            .with_header("content-type", "application/json")
-            .with_body(
-                r#"{
-                "created_at": "2020-08-18T00:00:00.000",
-                "id": 1,
-                "shop_id": 1,
-                "form_list": [
-                    {
-                        "mod_name": "Skyrim.esm",
-                        "local_form_id": 1,
-                        "name": "Iron Sword",
-                        "quantity": 1,
-                        "form_type": 1,
-                        "is_food": false,
-                        "price": 100
-                    }
-                ],
-                "updated_at": "2020-08-18T00:00:00.000"
-            }"#,
-            )
+            .with_header("content-type", "application/octet-stream")
+            .with_body(bincode::serialize(&example).unwrap())
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -655,7 +695,7 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "EOF while parsing a value at line 1 column 0" // empty tempfile
+                    "io error: failed to fill whole buffer" // empty tempfile
                 );
             }
         }
@@ -663,28 +703,26 @@ mod tests {
 
     #[test]
     fn test_get_merchandise_list_by_shop_id() {
+        let example = SavedMerchandiseList {
+            id: 1,
+            owner_id: 1,
+            shop_id: 1,
+            form_list: vec![Merchandise {
+                mod_name: "Skyrim.esm".to_string(),
+                local_form_id: 1,
+                name: "Iron Sword".to_string(),
+                quantity: 1,
+                form_type: 1,
+                is_food: false,
+                price: 100,
+            }],
+            created_at: Utc::now().naive_utc(),
+            updated_at: Utc::now().naive_utc(),
+        };
         let mock = mock("GET", "/v1/shops/1/merchandise_list")
             .with_status(201)
-            .with_header("content-type", "application/json")
-            .with_body(
-                r#"{
-                "created_at": "2020-08-18T00:00:00.000",
-                "id": 1,
-                "shop_id": 1,
-                "form_list": [
-                    {
-                        "mod_name": "Skyrim.esm",
-                        "local_form_id": 1,
-                        "name": "Iron Sword",
-                        "quantity": 1,
-                        "form_type": 1,
-                        "is_food": false,
-                        "price": 100
-                    }
-                ],
-                "updated_at": "2020-08-18T00:00:00.000"
-            }"#,
-            )
+            .with_header("content-type", "application/octet-stream")
+            .with_body(bincode::serialize(&example).unwrap())
             .create();
 
         let api_url = CString::new("url").unwrap().into_raw();
@@ -743,7 +781,7 @@ mod tests {
             FFIResult::Err(error) => {
                 assert_eq!(
                     unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "EOF while parsing a value at line 1 column 0" // empty tempfile
+                    "io error: failed to fill whole buffer" // empty tempfile
                 );
             }
         }

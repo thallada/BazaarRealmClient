@@ -92,7 +92,7 @@ pub fn from_file_cache<T: for<'de> Deserialize<'de>>(cache_path: &Path) -> Resul
 
     let reader = BufReader::new(file);
     info!("returning value from cache: {:?}", cache_path);
-    Ok(serde_json::from_reader(reader)?)
+    Ok(bincode::deserialize_from(reader)?)
 }
 
 pub fn load_metadata_from_file_cache(cache_path: &Path) -> Result<Metadata> {

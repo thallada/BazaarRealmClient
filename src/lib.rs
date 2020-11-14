@@ -14,6 +14,7 @@ use std::println as error;
 
 mod cache;
 mod client;
+mod error;
 mod interior_ref_list;
 mod merchandise_list;
 mod owner;
