@@ -17,8 +17,8 @@ use crate::{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Transaction {
-    pub id: Option<i32>,
     pub shop_id: i32,
+    pub owner_id: Option<i32>,
     pub mod_name: String,
     pub local_form_id: i32,
     pub name: String,
@@ -51,11 +51,8 @@ pub struct SavedTransaction {
 impl From<RawTransaction> for Transaction {
     fn from(raw_transaction: RawTransaction) -> Self {
         Self {
-            id: match raw_transaction.id {
-                0 => None,
-                _ => Some(raw_transaction.id),
-            },
             shop_id: raw_transaction.shop_id,
+            owner_id: None,
             mod_name: unsafe { CStr::from_ptr(raw_transaction.mod_name) }
                 .to_string_lossy()
                 .to_string(),
