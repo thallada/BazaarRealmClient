@@ -75,7 +75,7 @@ struct _Helper_0 {
     FFIResult<RawOwner> _raw_owner_result;
     FFIResult<RawShop> _raw_shop_result;
     FFIResult<RawShopVec> _raw_shop_vec_result;
-    FFIResult<RawInteriorRefVec> _raw_interior_ref_vec_result;
+    FFIResult<RawInteriorRefData> _raw_interior_ref_data_result;
     FFIResult<RawMerchandiseVec> _raw_merchandise_vec_result;
     FFIResult<RawTransaction> _raw_transaction_result;
 };

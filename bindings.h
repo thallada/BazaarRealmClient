@@ -73,6 +73,23 @@ struct RawInteriorRef {
   uint16_t scale;
 };
 
+struct RawShelf {
+  uint32_t shelf_type;
+  float position_x;
+  float position_y;
+  float position_z;
+  float angle_x;
+  float angle_y;
+  float angle_z;
+  uint16_t scale;
+  uint32_t page;
+  uint32_t filter_form_type;
+  bool filter_is_food;
+  const char *search;
+  const char *sort_on;
+  bool sort_asc;
+};
+
 struct RawMerchandise {
   const char *mod_name;
   uint32_t local_form_id;
@@ -115,6 +132,17 @@ struct RawInteriorRefVec {
   uintptr_t cap;
 };
 
+struct RawShelfVec {
+  RawShelf *ptr;
+  uintptr_t len;
+  uintptr_t cap;
+};
+
+struct RawInteriorRefData {
+  RawInteriorRefVec interior_ref_vec;
+  RawShelfVec shelf_vec;
+};
+
 struct RawMerchandiseVec {
   RawMerchandise *ptr;
   uintptr_t len;
@@ -134,7 +162,7 @@ struct _Helper_0 {
     FFIResult<RawOwner> _raw_owner_result;
     FFIResult<RawShop> _raw_shop_result;
     FFIResult<RawShopVec> _raw_shop_vec_result;
-    FFIResult<RawInteriorRefVec> _raw_interior_ref_vec_result;
+    FFIResult<RawInteriorRefData> _raw_interior_ref_data_result;
     FFIResult<RawMerchandiseVec> _raw_merchandise_vec_result;
     FFIResult<RawTransaction> _raw_transaction_result;
 };
@@ -150,7 +178,9 @@ FFIResult<int32_t> create_interior_ref_list(const char *api_url,
                                             const char *api_key,
                                             int32_t shop_id,
                                             const RawInteriorRef *raw_interior_ref_ptr,
-                                            uintptr_t raw_interior_ref_len);
+                                            uintptr_t raw_interior_ref_len,
+                                            const RawShelf *raw_shelf_ptr,
+                                            uintptr_t raw_shelf_len);
 
 FFIResult<int32_t> create_merchandise_list(const char *api_url,
                                            const char *api_key,
@@ -176,13 +206,13 @@ void free_string(char *ptr);
 
 char *generate_api_key();
 
-FFIResult<RawInteriorRefVec> get_interior_ref_list(const char *api_url,
-                                                   const char *api_key,
-                                                   int32_t interior_ref_list_id);
+FFIResult<RawInteriorRefData> get_interior_ref_list(const char *api_url,
+                                                    const char *api_key,
+                                                    int32_t interior_ref_list_id);
 
-FFIResult<RawInteriorRefVec> get_interior_ref_list_by_shop_id(const char *api_url,
-                                                              const char *api_key,
-                                                              int32_t shop_id);
+FFIResult<RawInteriorRefData> get_interior_ref_list_by_shop_id(const char *api_url,
+                                                               const char *api_key,
+                                                               int32_t shop_id);
 
 FFIResult<RawMerchandiseVec> get_merchandise_list(const char *api_url,
                                                   const char *api_key,
@@ -204,7 +234,9 @@ FFIResult<int32_t> update_interior_ref_list(const char *api_url,
                                             const char *api_key,
                                             int32_t shop_id,
                                             const RawInteriorRef *raw_interior_ref_ptr,
-                                            uintptr_t raw_interior_ref_len);
+                                            uintptr_t raw_interior_ref_len,
+                                            const RawShelf *raw_shelf_ptr,
+                                            uintptr_t raw_shelf_len);
 
 FFIResult<int32_t> update_merchandise_list(const char *api_url,
                                            const char *api_key,

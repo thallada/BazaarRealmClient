@@ -18,9 +18,10 @@ use crate::{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct InteriorRefList {
-    pub id: Option<i32>,
     pub shop_id: i32,
+    pub owner_id: Option<i32>,
     pub ref_list: Vec<InteriorRef>,
+    pub shelves: Vec<Shelf>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -38,11 +39,33 @@ pub struct InteriorRef {
     pub scale: u16,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Shelf {
+    pub shelf_type: u32,
+    pub position_x: f32,
+    pub position_y: f32,
+    pub position_z: f32,
+    pub angle_x: f32,
+    pub angle_y: f32,
+    pub angle_z: f32,
+    pub scale: u16,
+    pub page: u32,
+    pub filter_form_type: Option<u32>,
+    pub filter_is_food: bool,
+    pub search: Option<String>,
+    pub sort_on: Option<String>,
+    pub sort_asc: bool,
+}
+
 impl InteriorRefList {
-    pub fn from_game(shop_id: i32, raw_interior_ref_slice: &[RawInteriorRef]) -> Self {
+    pub fn from_game(
+        shop_id: i32,
+        raw_interior_ref_slice: &[RawInteriorRef],
+        raw_shelves_slice: &[RawShelf],
+    ) -> Self {
         Self {
-            id: None,
             shop_id,
+            owner_id: None,
             ref_list: raw_interior_ref_slice
                 .iter()
                 .map(|rec| InteriorRef {
@@ -68,6 +91,42 @@ impl InteriorRefList {
                     scale: rec.scale,
                 })
                 .collect(),
+            shelves: raw_shelves_slice
+                .iter()
+                .map(|rec| Shelf {
+                    shelf_type: rec.shelf_type,
+                    position_x: rec.position_x,
+                    position_y: rec.position_y,
+                    position_z: rec.position_z,
+                    angle_x: rec.angle_x,
+                    angle_y: rec.angle_y,
+                    angle_z: rec.angle_z,
+                    scale: rec.scale,
+                    page: rec.page,
+                    filter_form_type: match rec.filter_form_type {
+                        0 => None,
+                        _ => Some(rec.filter_form_type),
+                    },
+                    filter_is_food: rec.filter_is_food,
+                    search: match rec.search.is_null() {
+                        true => None,
+                        false => Some(
+                            unsafe { CStr::from_ptr(rec.search) }
+                                .to_string_lossy()
+                                .to_string(),
+                        ),
+                    },
+                    sort_on: match rec.sort_on.is_null() {
+                        true => None,
+                        false => Some(
+                            unsafe { CStr::from_ptr(rec.sort_on) }
+                                .to_string_lossy()
+                                .to_string(),
+                        ),
+                    },
+                    sort_asc: rec.sort_asc,
+                })
+                .collect(),
         }
     }
 }
@@ -78,6 +137,7 @@ pub struct SavedInteriorRefList {
     pub shop_id: i32,
     pub owner_id: i32,
     pub ref_list: Vec<InteriorRef>,
+    pub shelves: Vec<Shelf>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -123,10 +183,74 @@ impl From<InteriorRef> for RawInteriorRef {
 
 #[derive(Debug)]
 #[repr(C)]
+pub struct RawShelf {
+    pub shelf_type: u32,
+    pub position_x: f32,
+    pub position_y: f32,
+    pub position_z: f32,
+    pub angle_x: f32,
+    pub angle_y: f32,
+    pub angle_z: f32,
+    pub scale: u16,
+    pub page: u32,
+    pub filter_form_type: u32,
+    pub filter_is_food: bool,
+    pub search: *const c_char,
+    pub sort_on: *const c_char,
+    pub sort_asc: bool,
+}
+
+impl From<Shelf> for RawShelf {
+    fn from(shelf: Shelf) -> Self {
+        Self {
+            shelf_type: shelf.shelf_type,
+            position_x: shelf.position_x,
+            position_y: shelf.position_y,
+            position_z: shelf.position_z,
+            angle_x: shelf.angle_x,
+            angle_y: shelf.angle_y,
+            angle_z: shelf.angle_z,
+            scale: shelf.scale,
+            page: shelf.page,
+            filter_form_type: match shelf.filter_form_type {
+                None => 0,
+                Some(form_type) => form_type,
+            },
+            filter_is_food: shelf.filter_is_food,
+            search: match shelf.search {
+                None => std::ptr::null(),
+                Some(search) => CString::new(search).unwrap_or_default().into_raw(),
+            },
+            sort_on: match shelf.sort_on {
+                None => std::ptr::null(),
+                Some(sort_on) => CString::new(sort_on).unwrap_or_default().into_raw(),
+            },
+            sort_asc: shelf.sort_asc,
+        }
+    }
+}
+
+#[derive(Debug)]
+#[repr(C)]
 pub struct RawInteriorRefVec {
     pub ptr: *mut RawInteriorRef,
     pub len: usize,
     pub cap: usize,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct RawShelfVec {
+    pub ptr: *mut RawShelf,
+    pub len: usize,
+    pub cap: usize,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct RawInteriorRefData {
+    pub interior_ref_vec: RawInteriorRefVec,
+    pub shelf_vec: RawShelfVec,
 }
 
 // TODO: delete me if unused
@@ -137,13 +261,25 @@ pub extern "C" fn create_interior_ref_list(
     shop_id: i32,
     raw_interior_ref_ptr: *const RawInteriorRef,
     raw_interior_ref_len: usize,
+    raw_shelf_ptr: *const RawShelf,
+    raw_shelf_len: usize,
 ) -> FFIResult<i32> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
-    info!("create_interior_ref_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_interior_ref_len: {:?}", api_url, api_key, shop_id, raw_interior_ref_len);
-    let raw_interior_ref_slice = unsafe {
-        assert!(!raw_interior_ref_ptr.is_null());
-        slice::from_raw_parts(raw_interior_ref_ptr, raw_interior_ref_len)
+    info!("create_interior_ref_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_interior_ref_len: {:?}, raw_shelf_len: {:?}", api_url, api_key, shop_id, raw_interior_ref_len, raw_shelf_len);
+    let raw_interior_ref_slice = match raw_interior_ref_ptr.is_null() {
+        true => &[],
+        false => unsafe {
+            assert!(!raw_interior_ref_ptr.is_null());
+            slice::from_raw_parts(raw_interior_ref_ptr, raw_interior_ref_len)
+        },
+    };
+    let raw_shelf_slice = match raw_shelf_ptr.is_null() {
+        true => &[],
+        false => unsafe {
+            assert!(!raw_shelf_ptr.is_null());
+            slice::from_raw_parts(raw_shelf_ptr, raw_shelf_len)
+        },
     };
 
     fn inner(
@@ -151,13 +287,15 @@ pub extern "C" fn create_interior_ref_list(
         api_key: &str,
         shop_id: i32,
         raw_interior_ref_slice: &[RawInteriorRef],
+        raw_shelf_slice: &[RawShelf],
     ) -> Result<SavedInteriorRefList> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join("v1/interior_ref_lists")?;
         #[cfg(test)]
         let url = Url::parse(&mockito::server_url())?.join("v1/interior_ref_lists")?;
 
-        let interior_ref_list = InteriorRefList::from_game(shop_id, raw_interior_ref_slice);
+        let interior_ref_list =
+            InteriorRefList::from_game(shop_id, raw_interior_ref_slice, raw_shelf_slice);
         info!(
             "created interior_ref_list from game: shop_id: {}",
             &interior_ref_list.shop_id
@@ -192,7 +330,13 @@ pub extern "C" fn create_interior_ref_list(
         }
     }
 
-    match inner(&api_url, &api_key, shop_id, raw_interior_ref_slice) {
+    match inner(
+        &api_url,
+        &api_key,
+        shop_id,
+        raw_interior_ref_slice,
+        raw_shelf_slice,
+    ) {
         Ok(interior_ref_list) => FFIResult::Ok(interior_ref_list.id),
         Err(err) => {
             error!("create_interior_ref_list failed. {}", err);
@@ -212,13 +356,25 @@ pub extern "C" fn update_interior_ref_list(
     shop_id: i32,
     raw_interior_ref_ptr: *const RawInteriorRef,
     raw_interior_ref_len: usize,
+    raw_shelf_ptr: *const RawShelf,
+    raw_shelf_len: usize,
 ) -> FFIResult<i32> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
-    info!("update_interior_ref_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_interior_ref_len: {:?}", api_url, api_key, shop_id, raw_interior_ref_len);
-    let raw_interior_ref_slice = unsafe {
-        assert!(!raw_interior_ref_ptr.is_null());
-        slice::from_raw_parts(raw_interior_ref_ptr, raw_interior_ref_len)
+    info!("update_interior_ref_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_interior_ref_len: {:?}, raw_shelf_len: {:?}", api_url, api_key, shop_id, raw_interior_ref_len, raw_shelf_len);
+    let raw_interior_ref_slice = match raw_interior_ref_ptr.is_null() {
+        true => &[],
+        false => unsafe {
+            assert!(!raw_interior_ref_ptr.is_null());
+            slice::from_raw_parts(raw_interior_ref_ptr, raw_interior_ref_len)
+        },
+    };
+    let raw_shelf_slice = match raw_shelf_ptr.is_null() {
+        true => &[],
+        false => unsafe {
+            assert!(!raw_shelf_ptr.is_null());
+            slice::from_raw_parts(raw_shelf_ptr, raw_shelf_len)
+        },
     };
 
     fn inner(
@@ -226,6 +382,7 @@ pub extern "C" fn update_interior_ref_list(
         api_key: &str,
         shop_id: i32,
         raw_interior_ref_slice: &[RawInteriorRef],
+        raw_shelf_slice: &[RawShelf],
     ) -> Result<SavedInteriorRefList> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join(&format!("v1/shops/{}/interior_ref_list", shop_id))?;
@@ -233,7 +390,8 @@ pub extern "C" fn update_interior_ref_list(
         let url = Url::parse(&mockito::server_url())?
             .join(&format!("v1/shops/{}/interior_ref_list", shop_id))?;
 
-        let interior_ref_list = InteriorRefList::from_game(shop_id, raw_interior_ref_slice);
+        let interior_ref_list =
+            InteriorRefList::from_game(shop_id, raw_interior_ref_slice, raw_shelf_slice);
         info!(
             "created interior_ref_list from game: shop_id: {}",
             &interior_ref_list.shop_id
@@ -263,7 +421,13 @@ pub extern "C" fn update_interior_ref_list(
         }
     }
 
-    match inner(&api_url, &api_key, shop_id, raw_interior_ref_slice) {
+    match inner(
+        &api_url,
+        &api_key,
+        shop_id,
+        raw_interior_ref_slice,
+        raw_shelf_slice,
+    ) {
         Ok(interior_ref_list) => FFIResult::Ok(interior_ref_list.id),
         Err(err) => {
             error!("update_interior_ref_list failed. {}", err);
@@ -282,7 +446,7 @@ pub extern "C" fn get_interior_ref_list(
     api_url: *const c_char,
     api_key: *const c_char,
     interior_ref_list_id: i32,
-) -> FFIResult<RawInteriorRefVec> {
+) -> FFIResult<RawInteriorRefData> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
     info!(
@@ -347,14 +511,31 @@ pub extern "C" fn get_interior_ref_list(
 
     match inner(&api_url, &api_key, interior_ref_list_id) {
         Ok(interior_ref_list) => {
-            let (ptr, len, cap) = interior_ref_list
+            let (interior_ref_ptr, interior_ref_len, interior_ref_cap) = interior_ref_list
                 .ref_list
                 .into_iter()
                 .map(RawInteriorRef::from)
                 .collect::<Vec<RawInteriorRef>>()
                 .into_raw_parts();
+            let (shelf_ptr, shelf_len, shelf_cap) = interior_ref_list
+                .shelves
+                .into_iter()
+                .map(RawShelf::from)
+                .collect::<Vec<RawShelf>>()
+                .into_raw_parts();
             // TODO: need to pass this back into Rust once C++ is done with it so it can be manually dropped and the CStrings dropped from raw pointers.
-            FFIResult::Ok(RawInteriorRefVec { ptr, len, cap })
+            FFIResult::Ok(RawInteriorRefData {
+                interior_ref_vec: RawInteriorRefVec {
+                    ptr: interior_ref_ptr,
+                    len: interior_ref_len,
+                    cap: interior_ref_cap,
+                },
+                shelf_vec: RawShelfVec {
+                    ptr: shelf_ptr,
+                    len: shelf_len,
+                    cap: shelf_cap,
+                },
+            })
         }
         Err(err) => {
             error!("interior_ref_list failed. {}", err);
@@ -373,7 +554,7 @@ pub extern "C" fn get_interior_ref_list_by_shop_id(
     api_url: *const c_char,
     api_key: *const c_char,
     shop_id: i32,
-) -> FFIResult<RawInteriorRefVec> {
+) -> FFIResult<RawInteriorRefData> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
     info!(
@@ -436,14 +617,31 @@ pub extern "C" fn get_interior_ref_list_by_shop_id(
 
     match inner(&api_url, &api_key, shop_id) {
         Ok(interior_ref_list) => {
-            let (ptr, len, cap) = interior_ref_list
+            let (interior_ref_ptr, interior_ref_len, interior_ref_cap) = interior_ref_list
                 .ref_list
                 .into_iter()
                 .map(RawInteriorRef::from)
                 .collect::<Vec<RawInteriorRef>>()
                 .into_raw_parts();
+            let (shelf_ptr, shelf_len, shelf_cap) = interior_ref_list
+                .shelves
+                .into_iter()
+                .map(RawShelf::from)
+                .collect::<Vec<RawShelf>>()
+                .into_raw_parts();
             // TODO: need to pass this back into Rust once C++ is done with it so it can be manually dropped and the CStrings dropped from raw pointers.
-            FFIResult::Ok(RawInteriorRefVec { ptr, len, cap })
+            FFIResult::Ok(RawInteriorRefData {
+                interior_ref_vec: RawInteriorRefVec {
+                    ptr: interior_ref_ptr,
+                    len: interior_ref_len,
+                    cap: interior_ref_cap,
+                },
+                shelf_vec: RawShelfVec {
+                    ptr: shelf_ptr,
+                    len: shelf_len,
+                    cap: shelf_cap,
+                },
+            })
         }
         Err(err) => {
             error!("get_interior_ref_list_by_shop_id failed. {}", err);
@@ -484,6 +682,22 @@ mod tests {
                 angle_z: 0.,
                 scale: 1,
             }],
+            shelves: vec![Shelf {
+                shelf_type: 1,
+                position_x: 100.,
+                position_y: 0.,
+                position_z: 100.,
+                angle_x: 0.,
+                angle_y: 0.,
+                angle_z: 0.,
+                scale: 1,
+                page: 1,
+                filter_form_type: None,
+                filter_is_food: false,
+                search: None,
+                sort_on: None,
+                sort_asc: true,
+            }],
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         };
@@ -495,7 +709,7 @@ mod tests {
 
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
-        let (ptr, len, _cap) = vec![RawInteriorRef {
+        let (interior_ref_ptr, interior_ref_len, _cap) = vec![RawInteriorRef {
             base_mod_name: CString::new("Skyrim.esm").unwrap().into_raw(),
             base_local_form_id: 1,
             ref_mod_name: CString::new("BazaarRealm.esp").unwrap().into_raw(),
@@ -509,7 +723,32 @@ mod tests {
             scale: 1,
         }]
         .into_raw_parts();
-        let result = create_interior_ref_list(api_url, api_key, 1, ptr, len);
+        let (shelf_ptr, shelf_len, _cap) = vec![RawShelf {
+            shelf_type: 1,
+            position_x: 100.,
+            position_y: 0.,
+            position_z: 100.,
+            angle_x: 0.,
+            angle_y: 0.,
+            angle_z: 0.,
+            scale: 1,
+            page: 1,
+            filter_form_type: 0,
+            filter_is_food: false,
+            search: std::ptr::null(),
+            sort_on: std::ptr::null(),
+            sort_asc: true,
+        }]
+        .into_raw_parts();
+        let result = create_interior_ref_list(
+            api_url,
+            api_key,
+            1,
+            interior_ref_ptr,
+            interior_ref_len,
+            shelf_ptr,
+            shelf_len,
+        );
         mock.assert();
         match result {
             FFIResult::Ok(interior_ref_list_id) => {
@@ -532,7 +771,7 @@ mod tests {
 
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
-        let (ptr, len, _cap) = vec![RawInteriorRef {
+        let (interior_ref_ptr, interior_ref_len, _cap) = vec![RawInteriorRef {
             base_mod_name: CString::new("Skyrim.esm").unwrap().into_raw(),
             base_local_form_id: 1,
             ref_mod_name: CString::new("BazaarRealm.esp").unwrap().into_raw(),
@@ -546,7 +785,32 @@ mod tests {
             scale: 1,
         }]
         .into_raw_parts();
-        let result = create_interior_ref_list(api_url, api_key, 1, ptr, len);
+        let (shelf_ptr, shelf_len, _cap) = vec![RawShelf {
+            shelf_type: 1,
+            position_x: 100.,
+            position_y: 0.,
+            position_z: 100.,
+            angle_x: 0.,
+            angle_y: 0.,
+            angle_z: 0.,
+            scale: 1,
+            page: 1,
+            filter_form_type: 0,
+            filter_is_food: false,
+            search: std::ptr::null(),
+            sort_on: std::ptr::null(),
+            sort_asc: true,
+        }]
+        .into_raw_parts();
+        let result = create_interior_ref_list(
+            api_url,
+            api_key,
+            1,
+            interior_ref_ptr,
+            interior_ref_len,
+            shelf_ptr,
+            shelf_len,
+        );
         mock.assert();
         match result {
             FFIResult::Ok(interior_ref_list_id) => panic!(
@@ -581,6 +845,22 @@ mod tests {
                 angle_z: 0.,
                 scale: 1,
             }],
+            shelves: vec![Shelf {
+                shelf_type: 1,
+                position_x: 100.,
+                position_y: 0.,
+                position_z: 100.,
+                angle_x: 0.,
+                angle_y: 0.,
+                angle_z: 0.,
+                scale: 1,
+                page: 1,
+                filter_form_type: None,
+                filter_is_food: false,
+                search: None,
+                sort_on: None,
+                sort_asc: true,
+            }],
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         };
@@ -592,7 +872,7 @@ mod tests {
 
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
-        let (ptr, len, _cap) = vec![RawInteriorRef {
+        let (interior_ref_ptr, interior_ref_len, _cap) = vec![RawInteriorRef {
             base_mod_name: CString::new("Skyrim.esm").unwrap().into_raw(),
             base_local_form_id: 1,
             ref_mod_name: CString::new("BazaarRealm.esp").unwrap().into_raw(),
@@ -606,7 +886,32 @@ mod tests {
             scale: 1,
         }]
         .into_raw_parts();
-        let result = update_interior_ref_list(api_url, api_key, 1, ptr, len);
+        let (shelf_ptr, shelf_len, _cap) = vec![RawShelf {
+            shelf_type: 1,
+            position_x: 100.,
+            position_y: 0.,
+            position_z: 100.,
+            angle_x: 0.,
+            angle_y: 0.,
+            angle_z: 0.,
+            scale: 1,
+            page: 1,
+            filter_form_type: 0,
+            filter_is_food: false,
+            search: std::ptr::null(),
+            sort_on: std::ptr::null(),
+            sort_asc: true,
+        }]
+        .into_raw_parts();
+        let result = update_interior_ref_list(
+            api_url,
+            api_key,
+            1,
+            interior_ref_ptr,
+            interior_ref_len,
+            shelf_ptr,
+            shelf_len,
+        );
         mock.assert();
         match result {
             FFIResult::Ok(interior_ref_list_id) => {
@@ -629,7 +934,7 @@ mod tests {
 
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
-        let (ptr, len, _cap) = vec![RawInteriorRef {
+        let (interior_ref_ptr, interior_ref_len, _cap) = vec![RawInteriorRef {
             base_mod_name: CString::new("Skyrim.esm").unwrap().into_raw(),
             base_local_form_id: 1,
             ref_mod_name: CString::new("BazaarRealm.esp").unwrap().into_raw(),
@@ -643,7 +948,32 @@ mod tests {
             scale: 1,
         }]
         .into_raw_parts();
-        let result = update_interior_ref_list(api_url, api_key, 1, ptr, len);
+        let (shelf_ptr, shelf_len, _cap) = vec![RawShelf {
+            shelf_type: 1,
+            position_x: 100.,
+            position_y: 0.,
+            position_z: 100.,
+            angle_x: 0.,
+            angle_y: 0.,
+            angle_z: 0.,
+            scale: 1,
+            page: 1,
+            filter_form_type: 0,
+            filter_is_food: false,
+            search: std::ptr::null(),
+            sort_on: std::ptr::null(),
+            sort_asc: true,
+        }]
+        .into_raw_parts();
+        let result = update_interior_ref_list(
+            api_url,
+            api_key,
+            1,
+            interior_ref_ptr,
+            interior_ref_len,
+            shelf_ptr,
+            shelf_len,
+        );
         mock.assert();
         match result {
             FFIResult::Ok(interior_ref_list_id) => panic!(
@@ -678,6 +1008,22 @@ mod tests {
                 angle_z: 0.,
                 scale: 1,
             }],
+            shelves: vec![Shelf {
+                shelf_type: 1,
+                position_x: 100.,
+                position_y: 0.,
+                position_z: 100.,
+                angle_x: 0.,
+                angle_y: 0.,
+                angle_z: 0.,
+                scale: 1,
+                page: 1,
+                filter_form_type: None,
+                filter_is_food: false,
+                search: None,
+                sort_on: None,
+                sort_asc: true,
+            }],
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         };
@@ -692,13 +1038,25 @@ mod tests {
         let result = get_interior_ref_list(api_url, api_key, 1);
         mock.assert();
         match result {
-            FFIResult::Ok(raw_interior_ref_vec) => {
-                assert_eq!(raw_interior_ref_vec.len, 1);
+            FFIResult::Ok(raw_interior_ref_data) => {
+                assert_eq!(raw_interior_ref_data.interior_ref_vec.len, 1);
+                assert_eq!(raw_interior_ref_data.shelf_vec.len, 1);
                 let raw_interior_ref_slice = unsafe {
-                    assert!(!raw_interior_ref_vec.ptr.is_null());
-                    slice::from_raw_parts(raw_interior_ref_vec.ptr, raw_interior_ref_vec.len)
+                    assert!(!raw_interior_ref_data.interior_ref_vec.ptr.is_null());
+                    slice::from_raw_parts(
+                        raw_interior_ref_data.interior_ref_vec.ptr,
+                        raw_interior_ref_data.interior_ref_vec.len,
+                    )
                 };
                 let raw_interior_ref = &raw_interior_ref_slice[0];
+                let raw_shelf_slice = unsafe {
+                    assert!(!raw_interior_ref_data.shelf_vec.ptr.is_null());
+                    slice::from_raw_parts(
+                        raw_interior_ref_data.shelf_vec.ptr,
+                        raw_interior_ref_data.shelf_vec.len,
+                    )
+                };
+                let raw_shelf = &raw_shelf_slice[0];
                 assert_eq!(
                     unsafe { CStr::from_ptr(raw_interior_ref.base_mod_name) }
                         .to_string_lossy()
@@ -720,6 +1078,19 @@ mod tests {
                 assert_eq!(raw_interior_ref.angle_y, 0.);
                 assert_eq!(raw_interior_ref.angle_z, 0.);
                 assert_eq!(raw_interior_ref.scale, 1);
+                assert_eq!(raw_shelf.shelf_type, 1);
+                assert_eq!(raw_shelf.position_x, 100.);
+                assert_eq!(raw_shelf.position_y, 0.);
+                assert_eq!(raw_shelf.position_z, 100.);
+                assert_eq!(raw_shelf.angle_x, 0.);
+                assert_eq!(raw_shelf.angle_y, 0.);
+                assert_eq!(raw_shelf.angle_z, 0.);
+                assert_eq!(raw_shelf.scale, 1);
+                assert_eq!(raw_shelf.filter_form_type, 0);
+                assert_eq!(raw_shelf.filter_is_food, false);
+                assert_eq!(raw_shelf.search, std::ptr::null());
+                assert_eq!(raw_shelf.sort_on, std::ptr::null());
+                assert_eq!(raw_shelf.sort_asc, true);
             }
             FFIResult::Err(error) => panic!("get_interior_ref_list returned error: {:?}", unsafe {
                 CStr::from_ptr(error).to_string_lossy()
@@ -771,6 +1142,22 @@ mod tests {
                 angle_z: 0.,
                 scale: 1,
             }],
+            shelves: vec![Shelf {
+                shelf_type: 1,
+                position_x: 100.,
+                position_y: 0.,
+                position_z: 100.,
+                angle_x: 0.,
+                angle_y: 0.,
+                angle_z: 0.,
+                scale: 1,
+                page: 1,
+                filter_form_type: None,
+                filter_is_food: false,
+                search: None,
+                sort_on: None,
+                sort_asc: true,
+            }],
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         };
@@ -785,13 +1172,25 @@ mod tests {
         let result = get_interior_ref_list_by_shop_id(api_url, api_key, 1);
         mock.assert();
         match result {
-            FFIResult::Ok(raw_interior_ref_vec) => {
-                assert_eq!(raw_interior_ref_vec.len, 1);
+            FFIResult::Ok(raw_interior_ref_data) => {
+                assert_eq!(raw_interior_ref_data.interior_ref_vec.len, 1);
+                assert_eq!(raw_interior_ref_data.shelf_vec.len, 1);
                 let raw_interior_ref_slice = unsafe {
-                    assert!(!raw_interior_ref_vec.ptr.is_null());
-                    slice::from_raw_parts(raw_interior_ref_vec.ptr, raw_interior_ref_vec.len)
+                    assert!(!raw_interior_ref_data.interior_ref_vec.ptr.is_null());
+                    slice::from_raw_parts(
+                        raw_interior_ref_data.interior_ref_vec.ptr,
+                        raw_interior_ref_data.interior_ref_vec.len,
+                    )
                 };
                 let raw_interior_ref = &raw_interior_ref_slice[0];
+                let raw_shelf_slice = unsafe {
+                    assert!(!raw_interior_ref_data.shelf_vec.ptr.is_null());
+                    slice::from_raw_parts(
+                        raw_interior_ref_data.shelf_vec.ptr,
+                        raw_interior_ref_data.shelf_vec.len,
+                    )
+                };
+                let raw_shelf = &raw_shelf_slice[0];
                 assert_eq!(
                     unsafe { CStr::from_ptr(raw_interior_ref.base_mod_name) }
                         .to_string_lossy()
@@ -813,6 +1212,19 @@ mod tests {
                 assert_eq!(raw_interior_ref.angle_y, 0.);
                 assert_eq!(raw_interior_ref.angle_z, 0.);
                 assert_eq!(raw_interior_ref.scale, 1);
+                assert_eq!(raw_shelf.shelf_type, 1);
+                assert_eq!(raw_shelf.position_x, 100.);
+                assert_eq!(raw_shelf.position_y, 0.);
+                assert_eq!(raw_shelf.position_z, 100.);
+                assert_eq!(raw_shelf.angle_x, 0.);
+                assert_eq!(raw_shelf.angle_y, 0.);
+                assert_eq!(raw_shelf.angle_z, 0.);
+                assert_eq!(raw_shelf.scale, 1);
+                assert_eq!(raw_shelf.filter_form_type, 0);
+                assert_eq!(raw_shelf.filter_is_food, false);
+                assert_eq!(raw_shelf.search, std::ptr::null());
+                assert_eq!(raw_shelf.sort_on, std::ptr::null());
+                assert_eq!(raw_shelf.sort_asc, true);
             }
             FFIResult::Err(error) => panic!(
                 "get_interior_ref_list_by_shop_id returned error: {:?}",
