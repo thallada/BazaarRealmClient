@@ -574,10 +574,9 @@ mod tests {
         match result {
             FFIResult::Ok(raw_shops_vec) => {
                 assert_eq!(raw_shops_vec.len, 1);
-                let raw_shops_slice = unsafe {
-                    assert!(!raw_shops_vec.ptr.is_null());
-                    slice::from_raw_parts(raw_shops_vec.ptr, raw_shops_vec.len)
-                };
+                assert!(!raw_shops_vec.ptr.is_null());
+                let raw_shops_slice =
+                    unsafe { slice::from_raw_parts(raw_shops_vec.ptr, raw_shops_vec.len) };
                 let raw_shop = &raw_shops_slice[0];
                 assert_eq!(raw_shop.id, 1);
                 assert_eq!(

@@ -269,17 +269,11 @@ pub extern "C" fn create_interior_ref_list(
     info!("create_interior_ref_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_interior_ref_len: {:?}, raw_shelf_len: {:?}", api_url, api_key, shop_id, raw_interior_ref_len, raw_shelf_len);
     let raw_interior_ref_slice = match raw_interior_ref_ptr.is_null() {
         true => &[],
-        false => unsafe {
-            assert!(!raw_interior_ref_ptr.is_null());
-            slice::from_raw_parts(raw_interior_ref_ptr, raw_interior_ref_len)
-        },
+        false => unsafe { slice::from_raw_parts(raw_interior_ref_ptr, raw_interior_ref_len) },
     };
     let raw_shelf_slice = match raw_shelf_ptr.is_null() {
         true => &[],
-        false => unsafe {
-            assert!(!raw_shelf_ptr.is_null());
-            slice::from_raw_parts(raw_shelf_ptr, raw_shelf_len)
-        },
+        false => unsafe { slice::from_raw_parts(raw_shelf_ptr, raw_shelf_len) },
     };
 
     fn inner(
@@ -364,17 +358,11 @@ pub extern "C" fn update_interior_ref_list(
     info!("update_interior_ref_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_interior_ref_len: {:?}, raw_shelf_len: {:?}", api_url, api_key, shop_id, raw_interior_ref_len, raw_shelf_len);
     let raw_interior_ref_slice = match raw_interior_ref_ptr.is_null() {
         true => &[],
-        false => unsafe {
-            assert!(!raw_interior_ref_ptr.is_null());
-            slice::from_raw_parts(raw_interior_ref_ptr, raw_interior_ref_len)
-        },
+        false => unsafe { slice::from_raw_parts(raw_interior_ref_ptr, raw_interior_ref_len) },
     };
     let raw_shelf_slice = match raw_shelf_ptr.is_null() {
         true => &[],
-        false => unsafe {
-            assert!(!raw_shelf_ptr.is_null());
-            slice::from_raw_parts(raw_shelf_ptr, raw_shelf_len)
-        },
+        false => unsafe { slice::from_raw_parts(raw_shelf_ptr, raw_shelf_len) },
     };
 
     fn inner(
@@ -1041,16 +1029,16 @@ mod tests {
             FFIResult::Ok(raw_interior_ref_data) => {
                 assert_eq!(raw_interior_ref_data.interior_ref_vec.len, 1);
                 assert_eq!(raw_interior_ref_data.shelf_vec.len, 1);
+                assert!(!raw_interior_ref_data.interior_ref_vec.ptr.is_null());
                 let raw_interior_ref_slice = unsafe {
-                    assert!(!raw_interior_ref_data.interior_ref_vec.ptr.is_null());
                     slice::from_raw_parts(
                         raw_interior_ref_data.interior_ref_vec.ptr,
                         raw_interior_ref_data.interior_ref_vec.len,
                     )
                 };
                 let raw_interior_ref = &raw_interior_ref_slice[0];
+                assert!(!raw_interior_ref_data.shelf_vec.ptr.is_null());
                 let raw_shelf_slice = unsafe {
-                    assert!(!raw_interior_ref_data.shelf_vec.ptr.is_null());
                     slice::from_raw_parts(
                         raw_interior_ref_data.shelf_vec.ptr,
                         raw_interior_ref_data.shelf_vec.len,
@@ -1175,16 +1163,16 @@ mod tests {
             FFIResult::Ok(raw_interior_ref_data) => {
                 assert_eq!(raw_interior_ref_data.interior_ref_vec.len, 1);
                 assert_eq!(raw_interior_ref_data.shelf_vec.len, 1);
+                assert!(!raw_interior_ref_data.interior_ref_vec.ptr.is_null());
                 let raw_interior_ref_slice = unsafe {
-                    assert!(!raw_interior_ref_data.interior_ref_vec.ptr.is_null());
                     slice::from_raw_parts(
                         raw_interior_ref_data.interior_ref_vec.ptr,
                         raw_interior_ref_data.interior_ref_vec.len,
                     )
                 };
                 let raw_interior_ref = &raw_interior_ref_slice[0];
+                assert!(!raw_interior_ref_data.shelf_vec.ptr.is_null());
                 let raw_shelf_slice = unsafe {
-                    assert!(!raw_interior_ref_data.shelf_vec.ptr.is_null());
                     slice::from_raw_parts(
                         raw_interior_ref_data.shelf_vec.ptr,
                         raw_interior_ref_data.shelf_vec.len,

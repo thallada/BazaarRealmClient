@@ -101,9 +101,9 @@ pub extern "C" fn create_merchandise_list(
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
     info!("create_merchandise_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_merchandise_len: {:?}", api_url, api_key, shop_id, raw_merchandise_len);
-    let raw_merchandise_slice = unsafe {
-        assert!(!raw_merchandise_ptr.is_null());
-        slice::from_raw_parts(raw_merchandise_ptr, raw_merchandise_len)
+    let raw_merchandise_slice = match raw_merchandise_ptr.is_null() {
+        true => &[],
+        false => unsafe { slice::from_raw_parts(raw_merchandise_ptr, raw_merchandise_len) },
     };
 
     fn inner(
@@ -176,9 +176,9 @@ pub extern "C" fn update_merchandise_list(
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
     info!("create_merchandise_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_merchandise_len: {:?}", api_url, api_key, shop_id, raw_merchandise_len);
-    let raw_merchandise_slice = unsafe {
-        assert!(!raw_merchandise_ptr.is_null());
-        slice::from_raw_parts(raw_merchandise_ptr, raw_merchandise_len)
+    let raw_merchandise_slice = match raw_merchandise_ptr.is_null() {
+        true => &[],
+        false => unsafe { slice::from_raw_parts(raw_merchandise_ptr, raw_merchandise_len) },
     };
 
     fn inner(
@@ -647,8 +647,8 @@ mod tests {
         match result {
             FFIResult::Ok(raw_merchandise_vec) => {
                 assert_eq!(raw_merchandise_vec.len, 1);
+                assert!(!raw_merchandise_vec.ptr.is_null());
                 let raw_merchandise_slice = unsafe {
-                    assert!(!raw_merchandise_vec.ptr.is_null());
                     slice::from_raw_parts(raw_merchandise_vec.ptr, raw_merchandise_vec.len)
                 };
                 let raw_merchandise = &raw_merchandise_slice[0];
@@ -732,8 +732,8 @@ mod tests {
         match result {
             FFIResult::Ok(raw_merchandise_vec) => {
                 assert_eq!(raw_merchandise_vec.len, 1);
+                assert!(!raw_merchandise_vec.ptr.is_null());
                 let raw_merchandise_slice = unsafe {
-                    assert!(!raw_merchandise_vec.ptr.is_null());
                     slice::from_raw_parts(raw_merchandise_vec.ptr, raw_merchandise_vec.len)
                 };
                 let raw_merchandise = &raw_merchandise_slice[0];
