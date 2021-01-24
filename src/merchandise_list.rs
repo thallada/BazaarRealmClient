@@ -97,7 +97,7 @@ pub extern "C" fn create_merchandise_list(
     shop_id: i32,
     raw_merchandise_ptr: *const RawMerchandise,
     raw_merchandise_len: usize,
-) -> FFIResult<i32> {
+) -> FFIResult<RawMerchandiseVec> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
     info!("create_merchandise_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_merchandise_len: {:?}", api_url, api_key, shop_id, raw_merchandise_len);
@@ -153,13 +153,35 @@ pub extern "C" fn create_merchandise_list(
     }
 
     match inner(&api_url, &api_key, shop_id, raw_merchandise_slice) {
-        Ok(merchandise_list) => FFIResult::Ok(merchandise_list.id),
+        Ok(merchandise_list) => {
+            let (ptr, len, cap) = merchandise_list
+                .form_list
+                .into_iter()
+                .map(|merchandise| RawMerchandise {
+                    mod_name: CString::new(merchandise.mod_name)
+                        .unwrap_or_default()
+                        .into_raw(),
+                    local_form_id: merchandise.local_form_id,
+                    name: CString::new(merchandise.name)
+                        .unwrap_or_default()
+                        .into_raw(),
+                    quantity: merchandise.quantity,
+                    form_type: merchandise.form_type,
+                    is_food: merchandise.is_food,
+                    price: merchandise.price,
+                })
+                .collect::<Vec<RawMerchandise>>()
+                .into_raw_parts();
+            // TODO: need to pass this back into Rust once C++ is done with it so it can be manually dropped and the CStrings dropped from raw pointers.
+            FFIResult::Ok(RawMerchandiseVec { ptr, len, cap })
+        }
         Err(err) => {
             error!("create_merchandise_list failed. {}", err);
-            // TODO: also need to drop this CString once C++ is done reading it
+            // TODO: how to do error handling?
             let err_string = CString::new(err.to_string())
                 .expect("could not create CString")
                 .into_raw();
+            // TODO: also need to drop this CString once C++ is done reading it
             FFIResult::Err(err_string)
         }
     }
@@ -172,7 +194,7 @@ pub extern "C" fn update_merchandise_list(
     shop_id: i32,
     raw_merchandise_ptr: *const RawMerchandise,
     raw_merchandise_len: usize,
-) -> FFIResult<i32> {
+) -> FFIResult<RawMerchandiseVec> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
     info!("create_merchandise_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_merchandise_len: {:?}", api_url, api_key, shop_id, raw_merchandise_len);
@@ -224,13 +246,35 @@ pub extern "C" fn update_merchandise_list(
     }
 
     match inner(&api_url, &api_key, shop_id, raw_merchandise_slice) {
-        Ok(merchandise_list) => FFIResult::Ok(merchandise_list.id),
+        Ok(merchandise_list) => {
+            let (ptr, len, cap) = merchandise_list
+                .form_list
+                .into_iter()
+                .map(|merchandise| RawMerchandise {
+                    mod_name: CString::new(merchandise.mod_name)
+                        .unwrap_or_default()
+                        .into_raw(),
+                    local_form_id: merchandise.local_form_id,
+                    name: CString::new(merchandise.name)
+                        .unwrap_or_default()
+                        .into_raw(),
+                    quantity: merchandise.quantity,
+                    form_type: merchandise.form_type,
+                    is_food: merchandise.is_food,
+                    price: merchandise.price,
+                })
+                .collect::<Vec<RawMerchandise>>()
+                .into_raw_parts();
+            // TODO: need to pass this back into Rust once C++ is done with it so it can be manually dropped and the CStrings dropped from raw pointers.
+            FFIResult::Ok(RawMerchandiseVec { ptr, len, cap })
+        }
         Err(err) => {
             error!("update_merchandise_list failed. {}", err);
-            // TODO: also need to drop this CString once C++ is done reading it
+            // TODO: how to do error handling?
             let err_string = CString::new(err.to_string())
                 .expect("could not create CString")
                 .into_raw();
+            // TODO: also need to drop this CString once C++ is done reading it
             FFIResult::Err(err_string)
         }
     }
@@ -486,8 +530,30 @@ mod tests {
         let result = create_merchandise_list(api_url, api_key, 1, ptr, len);
         mock.assert();
         match result {
-            FFIResult::Ok(merchandise_list_id) => {
-                assert_eq!(merchandise_list_id, 1);
+            FFIResult::Ok(raw_merchandise_vec) => {
+                assert_eq!(raw_merchandise_vec.len, 1);
+                assert!(!raw_merchandise_vec.ptr.is_null());
+                let raw_merchandise_slice = unsafe {
+                    slice::from_raw_parts(raw_merchandise_vec.ptr, raw_merchandise_vec.len)
+                };
+                let raw_merchandise = &raw_merchandise_slice[0];
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_merchandise.mod_name) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "Skyrim.esm".to_string(),
+                );
+                assert_eq!(raw_merchandise.local_form_id, 1);
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_merchandise.name) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "Iron Sword".to_string(),
+                );
+                assert_eq!(raw_merchandise.quantity, 1);
+                assert_eq!(raw_merchandise.form_type, 1);
+                assert_eq!(raw_merchandise.is_food, false);
+                assert_eq!(raw_merchandise.price, 100);
             }
             FFIResult::Err(error) => {
                 panic!("create_merchandise_list returned error: {:?}", unsafe {
@@ -519,9 +585,9 @@ mod tests {
         let result = create_merchandise_list(api_url, api_key, 1, ptr, len);
         mock.assert();
         match result {
-            FFIResult::Ok(merchandise_list_id) => panic!(
-                "create_merchandise_list returned Ok result: {:?}",
-                merchandise_list_id
+            FFIResult::Ok(raw_merchandise_vec) => panic!(
+                "create_merchandise_list returned Ok result: {:#x?}",
+                raw_merchandise_vec
             ),
             FFIResult::Err(error) => {
                 assert_eq!(
@@ -571,8 +637,30 @@ mod tests {
         let result = update_merchandise_list(api_url, api_key, 1, ptr, len);
         mock.assert();
         match result {
-            FFIResult::Ok(merchandise_list_id) => {
-                assert_eq!(merchandise_list_id, 1);
+            FFIResult::Ok(raw_merchandise_vec) => {
+                assert_eq!(raw_merchandise_vec.len, 1);
+                assert!(!raw_merchandise_vec.ptr.is_null());
+                let raw_merchandise_slice = unsafe {
+                    slice::from_raw_parts(raw_merchandise_vec.ptr, raw_merchandise_vec.len)
+                };
+                let raw_merchandise = &raw_merchandise_slice[0];
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_merchandise.mod_name) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "Skyrim.esm".to_string(),
+                );
+                assert_eq!(raw_merchandise.local_form_id, 1);
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_merchandise.name) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "Iron Sword".to_string(),
+                );
+                assert_eq!(raw_merchandise.quantity, 1);
+                assert_eq!(raw_merchandise.form_type, 1);
+                assert_eq!(raw_merchandise.is_food, false);
+                assert_eq!(raw_merchandise.price, 100);
             }
             FFIResult::Err(error) => {
                 panic!("update_merchandise_list returned error: {:?}", unsafe {
@@ -604,9 +692,9 @@ mod tests {
         let result = update_merchandise_list(api_url, api_key, 1, ptr, len);
         mock.assert();
         match result {
-            FFIResult::Ok(merchandise_list_id) => panic!(
-                "update_merchandise_list returned Ok result: {:?}",
-                merchandise_list_id
+            FFIResult::Ok(raw_merchandise_vec) => panic!(
+                "update_merchandise_list returned Ok result: {:#x?}",
+                raw_merchandise_vec
             ),
             FFIResult::Err(error) => {
                 assert_eq!(

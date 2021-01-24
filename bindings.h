@@ -100,6 +100,12 @@ struct RawMerchandise {
   uint32_t price;
 };
 
+struct RawMerchandiseVec {
+  RawMerchandise *ptr;
+  uintptr_t len;
+  uintptr_t cap;
+};
+
 struct RawOwner {
   int32_t id;
   const char *name;
@@ -143,12 +149,6 @@ struct RawInteriorRefData {
   RawShelfVec shelf_vec;
 };
 
-struct RawMerchandiseVec {
-  RawMerchandise *ptr;
-  uintptr_t len;
-  uintptr_t cap;
-};
-
 struct RawShopVec {
   RawShop *ptr;
   uintptr_t len;
@@ -182,11 +182,11 @@ FFIResult<int32_t> create_interior_ref_list(const char *api_url,
                                             const RawShelf *raw_shelf_ptr,
                                             uintptr_t raw_shelf_len);
 
-FFIResult<int32_t> create_merchandise_list(const char *api_url,
-                                           const char *api_key,
-                                           int32_t shop_id,
-                                           const RawMerchandise *raw_merchandise_ptr,
-                                           uintptr_t raw_merchandise_len);
+FFIResult<RawMerchandiseVec> create_merchandise_list(const char *api_url,
+                                                     const char *api_key,
+                                                     int32_t shop_id,
+                                                     const RawMerchandise *raw_merchandise_ptr,
+                                                     uintptr_t raw_merchandise_len);
 
 FFIResult<RawOwner> create_owner(const char *api_url,
                                  const char *api_key,
@@ -238,11 +238,11 @@ FFIResult<int32_t> update_interior_ref_list(const char *api_url,
                                             const RawShelf *raw_shelf_ptr,
                                             uintptr_t raw_shelf_len);
 
-FFIResult<int32_t> update_merchandise_list(const char *api_url,
-                                           const char *api_key,
-                                           int32_t shop_id,
-                                           const RawMerchandise *raw_merchandise_ptr,
-                                           uintptr_t raw_merchandise_len);
+FFIResult<RawMerchandiseVec> update_merchandise_list(const char *api_url,
+                                                     const char *api_key,
+                                                     int32_t shop_id,
+                                                     const RawMerchandise *raw_merchandise_ptr,
+                                                     uintptr_t raw_merchandise_len);
 
 FFIResult<RawOwner> update_owner(const char *api_url,
                                  const char *api_key,
