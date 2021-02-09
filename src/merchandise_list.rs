@@ -32,27 +32,43 @@ pub struct Merchandise {
     pub form_type: u32,
     pub is_food: bool,
     pub price: u32,
+    pub keywords: Vec<String>,
 }
 
 impl MerchandiseList {
     pub fn from_game(shop_id: i32, merch_records: &[RawMerchandise]) -> Self {
+        info!("MerchandiseList::from_game shop_id: {:?}", shop_id);
         Self {
             shop_id,
             owner_id: None,
             form_list: merch_records
                 .iter()
-                .map(|rec| Merchandise {
-                    mod_name: unsafe { CStr::from_ptr(rec.mod_name) }
-                        .to_string_lossy()
-                        .to_string(),
-                    local_form_id: rec.local_form_id,
-                    name: unsafe { CStr::from_ptr(rec.name) }
-                        .to_string_lossy()
-                        .to_string(),
-                    quantity: rec.quantity,
-                    form_type: rec.form_type,
-                    is_food: rec.is_food,
-                    price: rec.price,
+                .map(|rec| {
+                    info!("MerchandiseList::from_game local_form_id: {:?} keywords_len: {:?} keywords.is_null(): {:?}", rec.local_form_id, rec.keywords_len, rec.keywords.is_null());
+                    Merchandise {
+                        mod_name: unsafe { CStr::from_ptr(rec.mod_name) }
+                            .to_string_lossy()
+                            .to_string(),
+                        local_form_id: rec.local_form_id,
+                        name: unsafe { CStr::from_ptr(rec.name) }
+                            .to_string_lossy()
+                            .to_string(),
+                        quantity: rec.quantity,
+                        form_type: rec.form_type,
+                        is_food: rec.is_food,
+                        price: rec.price,
+                        keywords: match rec.keywords.is_null() {
+                            true => vec![],
+                            false => unsafe { slice::from_raw_parts(rec.keywords, rec.keywords_len) }
+                                .iter()
+                                .map(|&keyword| {
+                                    unsafe { CStr::from_ptr(keyword) }
+                                        .to_string_lossy()
+                                        .to_string()
+                                })
+                                .collect(),
+                        }
+                    }
                 })
                 .collect(),
         }
@@ -79,6 +95,8 @@ pub struct RawMerchandise {
     pub form_type: u32,
     pub is_food: bool,
     pub price: u32,
+    pub keywords: *mut *const c_char,
+    pub keywords_len: usize,
 }
 
 #[derive(Debug)]
@@ -100,7 +118,7 @@ pub extern "C" fn create_merchandise_list(
 ) -> FFIResult<RawMerchandiseVec> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
-    info!("create_merchandise_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_merchandise_len: {:?}", api_url, api_key, shop_id, raw_merchandise_len);
+    info!("create_merchandise_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_merchandise_len: {:?}, raw_merchandise_ptr: {:?}", api_url, api_key, shop_id, raw_merchandise_len, raw_merchandise_ptr);
     let raw_merchandise_slice = match raw_merchandise_ptr.is_null() {
         true => &[],
         false => unsafe { slice::from_raw_parts(raw_merchandise_ptr, raw_merchandise_len) },
@@ -157,18 +175,30 @@ pub extern "C" fn create_merchandise_list(
             let (ptr, len, cap) = merchandise_list
                 .form_list
                 .into_iter()
-                .map(|merchandise| RawMerchandise {
-                    mod_name: CString::new(merchandise.mod_name)
-                        .unwrap_or_default()
-                        .into_raw(),
-                    local_form_id: merchandise.local_form_id,
-                    name: CString::new(merchandise.name)
-                        .unwrap_or_default()
-                        .into_raw(),
-                    quantity: merchandise.quantity,
-                    form_type: merchandise.form_type,
-                    is_food: merchandise.is_food,
-                    price: merchandise.price,
+                .map(|merchandise| {
+                    let (keywords_ptr, keywords_len, _) = merchandise
+                        .keywords
+                        .into_iter()
+                        .map(|keyword| {
+                            CString::new(keyword).unwrap_or_default().into_raw() as *const c_char
+                        })
+                        .collect::<Vec<*const c_char>>()
+                        .into_raw_parts();
+                    RawMerchandise {
+                        mod_name: CString::new(merchandise.mod_name)
+                            .unwrap_or_default()
+                            .into_raw(),
+                        local_form_id: merchandise.local_form_id,
+                        name: CString::new(merchandise.name)
+                            .unwrap_or_default()
+                            .into_raw(),
+                        quantity: merchandise.quantity,
+                        form_type: merchandise.form_type,
+                        is_food: merchandise.is_food,
+                        price: merchandise.price,
+                        keywords: keywords_ptr,
+                        keywords_len: keywords_len,
+                    }
                 })
                 .collect::<Vec<RawMerchandise>>()
                 .into_raw_parts();
@@ -197,7 +227,7 @@ pub extern "C" fn update_merchandise_list(
 ) -> FFIResult<RawMerchandiseVec> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
-    info!("create_merchandise_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_merchandise_len: {:?}", api_url, api_key, shop_id, raw_merchandise_len);
+    info!("update_merchandise_list api_url: {:?}, api_key: {:?}, shop_id: {:?}, raw_merchandise_len: {:?}, raw_merchandise_ptr: {:?}", api_url, api_key, shop_id, raw_merchandise_len, raw_merchandise_ptr);
     let raw_merchandise_slice = match raw_merchandise_ptr.is_null() {
         true => &[],
         false => unsafe { slice::from_raw_parts(raw_merchandise_ptr, raw_merchandise_len) },
@@ -250,18 +280,30 @@ pub extern "C" fn update_merchandise_list(
             let (ptr, len, cap) = merchandise_list
                 .form_list
                 .into_iter()
-                .map(|merchandise| RawMerchandise {
-                    mod_name: CString::new(merchandise.mod_name)
-                        .unwrap_or_default()
-                        .into_raw(),
-                    local_form_id: merchandise.local_form_id,
-                    name: CString::new(merchandise.name)
-                        .unwrap_or_default()
-                        .into_raw(),
-                    quantity: merchandise.quantity,
-                    form_type: merchandise.form_type,
-                    is_food: merchandise.is_food,
-                    price: merchandise.price,
+                .map(|merchandise| {
+                    let (keywords_ptr, keywords_len, _) = merchandise
+                        .keywords
+                        .into_iter()
+                        .map(|keyword| {
+                            CString::new(keyword).unwrap_or_default().into_raw() as *const c_char
+                        })
+                        .collect::<Vec<*const c_char>>()
+                        .into_raw_parts();
+                    RawMerchandise {
+                        mod_name: CString::new(merchandise.mod_name)
+                            .unwrap_or_default()
+                            .into_raw(),
+                        local_form_id: merchandise.local_form_id,
+                        name: CString::new(merchandise.name)
+                            .unwrap_or_default()
+                            .into_raw(),
+                        quantity: merchandise.quantity,
+                        form_type: merchandise.form_type,
+                        is_food: merchandise.is_food,
+                        price: merchandise.price,
+                        keywords: keywords_ptr,
+                        keywords_len: keywords_len,
+                    }
                 })
                 .collect::<Vec<RawMerchandise>>()
                 .into_raw_parts();
@@ -355,18 +397,30 @@ pub extern "C" fn get_merchandise_list(
             let (ptr, len, cap) = merchandise_list
                 .form_list
                 .into_iter()
-                .map(|merchandise| RawMerchandise {
-                    mod_name: CString::new(merchandise.mod_name)
-                        .unwrap_or_default()
-                        .into_raw(),
-                    local_form_id: merchandise.local_form_id,
-                    name: CString::new(merchandise.name)
-                        .unwrap_or_default()
-                        .into_raw(),
-                    quantity: merchandise.quantity,
-                    form_type: merchandise.form_type,
-                    is_food: merchandise.is_food,
-                    price: merchandise.price,
+                .map(|merchandise| {
+                    let (keywords_ptr, keywords_len, _) = merchandise
+                        .keywords
+                        .into_iter()
+                        .map(|keyword| {
+                            CString::new(keyword).unwrap_or_default().into_raw() as *const c_char
+                        })
+                        .collect::<Vec<*const c_char>>()
+                        .into_raw_parts();
+                    RawMerchandise {
+                        mod_name: CString::new(merchandise.mod_name)
+                            .unwrap_or_default()
+                            .into_raw(),
+                        local_form_id: merchandise.local_form_id,
+                        name: CString::new(merchandise.name)
+                            .unwrap_or_default()
+                            .into_raw(),
+                        quantity: merchandise.quantity,
+                        form_type: merchandise.form_type,
+                        is_food: merchandise.is_food,
+                        price: merchandise.price,
+                        keywords: keywords_ptr,
+                        keywords_len: keywords_len,
+                    }
                 })
                 .collect::<Vec<RawMerchandise>>()
                 .into_raw_parts();
@@ -453,18 +507,30 @@ pub extern "C" fn get_merchandise_list_by_shop_id(
             let (ptr, len, cap) = merchandise_list
                 .form_list
                 .into_iter()
-                .map(|merchandise| RawMerchandise {
-                    mod_name: CString::new(merchandise.mod_name)
-                        .unwrap_or_default()
-                        .into_raw(),
-                    local_form_id: merchandise.local_form_id,
-                    name: CString::new(merchandise.name)
-                        .unwrap_or_default()
-                        .into_raw(),
-                    quantity: merchandise.quantity,
-                    form_type: merchandise.form_type,
-                    is_food: merchandise.is_food,
-                    price: merchandise.price,
+                .map(|merchandise| {
+                    let (keywords_ptr, keywords_len, _) = merchandise
+                        .keywords
+                        .into_iter()
+                        .map(|keyword| {
+                            CString::new(keyword).unwrap_or_default().into_raw() as *const c_char
+                        })
+                        .collect::<Vec<*const c_char>>()
+                        .into_raw_parts();
+                    RawMerchandise {
+                        mod_name: CString::new(merchandise.mod_name)
+                            .unwrap_or_default()
+                            .into_raw(),
+                        local_form_id: merchandise.local_form_id,
+                        name: CString::new(merchandise.name)
+                            .unwrap_or_default()
+                            .into_raw(),
+                        quantity: merchandise.quantity,
+                        form_type: merchandise.form_type,
+                        is_food: merchandise.is_food,
+                        price: merchandise.price,
+                        keywords: keywords_ptr,
+                        keywords_len: keywords_len,
+                    }
                 })
                 .collect::<Vec<RawMerchandise>>()
                 .into_raw_parts();
@@ -505,6 +571,7 @@ mod tests {
                 form_type: 1,
                 is_food: false,
                 price: 100,
+                keywords: vec!["VendorItemWeapon".to_string()],
             }],
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
@@ -515,6 +582,9 @@ mod tests {
             .with_body(bincode::serialize(&example).unwrap())
             .create();
 
+        let (keywords, keywords_len, _) =
+            vec![CString::new("VendorItemWeapon").unwrap().into_raw() as *const c_char]
+                .into_raw_parts();
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
         let (ptr, len, _cap) = vec![RawMerchandise {
@@ -525,6 +595,8 @@ mod tests {
             form_type: 1,
             is_food: false,
             price: 100,
+            keywords,
+            keywords_len,
         }]
         .into_raw_parts();
         let result = create_merchandise_list(api_url, api_key, 1, ptr, len);
@@ -570,6 +642,9 @@ mod tests {
             .with_body("Internal Server Error")
             .create();
 
+        let (keywords, keywords_len, _) =
+            vec![CString::new("VendorItemWeapon").unwrap().into_raw() as *const c_char]
+                .into_raw_parts();
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
         let (ptr, len, _cap) = vec![RawMerchandise {
@@ -580,6 +655,8 @@ mod tests {
             form_type: 1,
             is_food: false,
             price: 100,
+            keywords,
+            keywords_len,
         }]
         .into_raw_parts();
         let result = create_merchandise_list(api_url, api_key, 1, ptr, len);
@@ -612,6 +689,7 @@ mod tests {
                 form_type: 1,
                 is_food: false,
                 price: 100,
+                keywords: vec!["VendorItemWeapon".to_string()],
             }],
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
@@ -622,6 +700,9 @@ mod tests {
             .with_body(bincode::serialize(&example).unwrap())
             .create();
 
+        let (keywords, keywords_len, _) =
+            vec![CString::new("VendorItemWeapon").unwrap().into_raw() as *const c_char]
+                .into_raw_parts();
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
         let (ptr, len, _cap) = vec![RawMerchandise {
@@ -632,6 +713,8 @@ mod tests {
             form_type: 1,
             is_food: false,
             price: 100,
+            keywords,
+            keywords_len,
         }]
         .into_raw_parts();
         let result = update_merchandise_list(api_url, api_key, 1, ptr, len);
@@ -677,6 +760,9 @@ mod tests {
             .with_body("Internal Server Error")
             .create();
 
+        let (keywords, keywords_len, _) =
+            vec![CString::new("VendorItemWeapon").unwrap().into_raw() as *const c_char]
+                .into_raw_parts();
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
         let (ptr, len, _cap) = vec![RawMerchandise {
@@ -687,6 +773,8 @@ mod tests {
             form_type: 1,
             is_food: false,
             price: 100,
+            keywords,
+            keywords_len,
         }]
         .into_raw_parts();
         let result = update_merchandise_list(api_url, api_key, 1, ptr, len);
@@ -718,6 +806,7 @@ mod tests {
                 form_type: 1,
                 is_food: false,
                 price: 100,
+                keywords: vec!["VendorItemWeapon".to_string()],
             }],
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
@@ -728,6 +817,9 @@ mod tests {
             .with_body(bincode::serialize(&example).unwrap())
             .create();
 
+        let (keywords, keywords_len, _) =
+            vec![CString::new("VendorItemWeapon").unwrap().into_raw() as *const c_char]
+                .into_raw_parts();
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
         let result = get_merchandise_list(api_url, api_key, 1);
@@ -757,6 +849,16 @@ mod tests {
                 assert_eq!(raw_merchandise.form_type, 1);
                 assert_eq!(raw_merchandise.is_food, false);
                 assert_eq!(raw_merchandise.price, 100);
+                assert!(!raw_merchandise.keywords.is_null());
+                let keywords_slice = unsafe {
+                    slice::from_raw_parts(raw_merchandise.keywords, raw_merchandise.keywords_len)
+                };
+                assert_eq!(
+                    unsafe { CStr::from_ptr(keywords_slice[0]) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "VendorItemWeapon".to_string(),
+                );
             }
             FFIResult::Err(error) => panic!("get_merchandise_list returned error: {:?}", unsafe {
                 CStr::from_ptr(error).to_string_lossy()
@@ -803,6 +905,7 @@ mod tests {
                 form_type: 1,
                 is_food: false,
                 price: 100,
+                keywords: vec!["VendorItemWeapon".to_string()],
             }],
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
@@ -813,6 +916,9 @@ mod tests {
             .with_body(bincode::serialize(&example).unwrap())
             .create();
 
+        let (keywords, keywords_len, _) =
+            vec![CString::new("VendorItemWeapon").unwrap().into_raw() as *const c_char]
+                .into_raw_parts();
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
         let result = get_merchandise_list_by_shop_id(api_url, api_key, 1);
@@ -842,6 +948,16 @@ mod tests {
                 assert_eq!(raw_merchandise.form_type, 1);
                 assert_eq!(raw_merchandise.is_food, false);
                 assert_eq!(raw_merchandise.price, 100);
+                assert!(!raw_merchandise.keywords.is_null());
+                let keywords_slice = unsafe {
+                    slice::from_raw_parts(raw_merchandise.keywords, raw_merchandise.keywords_len)
+                };
+                assert_eq!(
+                    unsafe { CStr::from_ptr(keywords_slice[0]) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "VendorItemWeapon".to_string(),
+                );
             }
             FFIResult::Err(error) => panic!(
                 "get_merchandise_list_by_shop_id returned error: {:?}",

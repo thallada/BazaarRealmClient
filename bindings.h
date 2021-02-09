@@ -98,6 +98,8 @@ struct RawMerchandise {
   uint32_t form_type;
   bool is_food;
   uint32_t price;
+  const char **keywords;
+  uintptr_t keywords_len;
 };
 
 struct RawMerchandiseVec {
