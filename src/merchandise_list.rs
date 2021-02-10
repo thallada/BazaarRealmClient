@@ -197,7 +197,7 @@ pub extern "C" fn create_merchandise_list(
                         is_food: merchandise.is_food,
                         price: merchandise.price,
                         keywords: keywords_ptr,
-                        keywords_len: keywords_len,
+                        keywords_len,
                     }
                 })
                 .collect::<Vec<RawMerchandise>>()
@@ -302,7 +302,7 @@ pub extern "C" fn update_merchandise_list(
                         is_food: merchandise.is_food,
                         price: merchandise.price,
                         keywords: keywords_ptr,
-                        keywords_len: keywords_len,
+                        keywords_len,
                     }
                 })
                 .collect::<Vec<RawMerchandise>>()
@@ -419,7 +419,7 @@ pub extern "C" fn get_merchandise_list(
                         is_food: merchandise.is_food,
                         price: merchandise.price,
                         keywords: keywords_ptr,
-                        keywords_len: keywords_len,
+                        keywords_len,
                     }
                 })
                 .collect::<Vec<RawMerchandise>>()
@@ -529,7 +529,7 @@ pub extern "C" fn get_merchandise_list_by_shop_id(
                         is_food: merchandise.is_food,
                         price: merchandise.price,
                         keywords: keywords_ptr,
-                        keywords_len: keywords_len,
+                        keywords_len,
                     }
                 })
                 .collect::<Vec<RawMerchandise>>()
@@ -817,9 +817,6 @@ mod tests {
             .with_body(bincode::serialize(&example).unwrap())
             .create();
 
-        let (keywords, keywords_len, _) =
-            vec![CString::new("VendorItemWeapon").unwrap().into_raw() as *const c_char]
-                .into_raw_parts();
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
         let result = get_merchandise_list(api_url, api_key, 1);
@@ -916,9 +913,6 @@ mod tests {
             .with_body(bincode::serialize(&example).unwrap())
             .create();
 
-        let (keywords, keywords_len, _) =
-            vec![CString::new("VendorItemWeapon").unwrap().into_raw() as *const c_char]
-                .into_raw_parts();
         let api_url = CString::new("url").unwrap().into_raw();
         let api_key = CString::new("api-key").unwrap().into_raw();
         let result = get_merchandise_list_by_shop_id(api_url, api_key, 1);

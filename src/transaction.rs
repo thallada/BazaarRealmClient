@@ -1,4 +1,4 @@
-use std::{ffi::CStr, ffi::CString, os::raw::c_char};
+use std::{ffi::CStr, ffi::CString, os::raw::c_char, slice};
 
 use anyhow::Result;
 use chrono::NaiveDateTime;
@@ -28,6 +28,7 @@ pub struct Transaction {
     pub is_sell: bool,
     pub quantity: i32,
     pub amount: i32,
+    pub keywords: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -44,6 +45,7 @@ pub struct SavedTransaction {
     pub is_sell: bool,
     pub quantity: i32,
     pub amount: i32,
+    pub keywords: Vec<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -66,6 +68,19 @@ impl From<RawTransaction> for Transaction {
             is_sell: raw_transaction.is_sell,
             quantity: raw_transaction.quantity,
             amount: raw_transaction.amount,
+            keywords: match raw_transaction.keywords.is_null() {
+                true => vec![],
+                false => unsafe {
+                    slice::from_raw_parts(raw_transaction.keywords, raw_transaction.keywords_len)
+                }
+                .iter()
+                .map(|&keyword| {
+                    unsafe { CStr::from_ptr(keyword) }
+                        .to_string_lossy()
+                        .to_string()
+                })
+                .collect(),
+            },
         }
     }
 }
@@ -84,10 +99,18 @@ pub struct RawTransaction {
     pub is_sell: bool,
     pub quantity: i32,
     pub amount: i32,
+    pub keywords: *mut *const c_char,
+    pub keywords_len: usize,
 }
 
 impl From<SavedTransaction> for RawTransaction {
     fn from(transaction: SavedTransaction) -> Self {
+        let (keywords_ptr, keywords_len, _) = transaction
+            .keywords
+            .into_iter()
+            .map(|keyword| CString::new(keyword).unwrap_or_default().into_raw() as *const c_char)
+            .collect::<Vec<*const c_char>>()
+            .into_raw_parts();
         Self {
             id: transaction.id,
             shop_id: transaction.shop_id,
@@ -104,6 +127,8 @@ impl From<SavedTransaction> for RawTransaction {
             is_sell: transaction.is_sell,
             quantity: transaction.quantity,
             amount: transaction.amount,
+            keywords: keywords_ptr,
+            keywords_len,
         }
     }
 }
@@ -200,6 +225,7 @@ mod tests {
             price: 100,
             quantity: 1,
             amount: 100,
+            keywords: vec!["VendorItemMisc".to_string()],
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         };
@@ -213,6 +239,9 @@ mod tests {
         let api_key = CString::new("api-key").unwrap().into_raw();
         let mod_name = CString::new("Skyrim.esm").unwrap().into_raw();
         let name = CString::new("Item").unwrap().into_raw();
+        let (keywords, keywords_len, _) =
+            vec![CString::new("VendorItemsMisc").unwrap().into_raw() as *const c_char]
+                .into_raw_parts();
         let raw_transaction = RawTransaction {
             id: 0,
             shop_id: 1,
@@ -225,6 +254,8 @@ mod tests {
             is_sell: false,
             amount: 100,
             quantity: 1,
+            keywords,
+            keywords_len,
         };
         let result = create_transaction(api_url, api_key, raw_transaction);
         mock.assert();
@@ -247,6 +278,21 @@ mod tests {
                 assert_eq!(raw_transaction.is_sell, false);
                 assert_eq!(raw_transaction.quantity, 1);
                 assert_eq!(raw_transaction.amount, 100);
+                assert_eq!(raw_transaction.keywords_len, 1);
+                assert_eq!(
+                    unsafe {
+                        slice::from_raw_parts(
+                            raw_transaction.keywords,
+                            raw_transaction.keywords_len,
+                        )
+                    }
+                    .iter()
+                    .map(|&keyword| {
+                        unsafe { CStr::from_ptr(keyword).to_string_lossy().to_string() }
+                    })
+                    .collect::<Vec<String>>(),
+                    vec!["VendorItemMisc".to_string()]
+                );
             }
             FFIResult::Err(error) => panic!("create_transaction returned error: {:?}", unsafe {
                 CStr::from_ptr(error).to_string_lossy()
@@ -273,6 +319,9 @@ mod tests {
         let api_key = CString::new("api-key").unwrap().into_raw();
         let mod_name = CString::new("Skyrim.esm").unwrap().into_raw();
         let name = CString::new("Item").unwrap().into_raw();
+        let (keywords, keywords_len, _) =
+            vec![CString::new("VendorItemsMisc").unwrap().into_raw() as *const c_char]
+                .into_raw_parts();
         let raw_transaction = RawTransaction {
             id: 0,
             shop_id: 1,
@@ -285,6 +334,8 @@ mod tests {
             is_sell: false,
             amount: 100,
             quantity: 1,
+            keywords,
+            keywords_len,
         };
         let result = create_transaction(api_url, api_key, raw_transaction);
         mock.assert();

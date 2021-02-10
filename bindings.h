@@ -132,6 +132,8 @@ struct RawTransaction {
   bool is_sell;
   int32_t quantity;
   int32_t amount;
+  const char **keywords;
+  uintptr_t keywords_len;
 };
 
 struct RawInteriorRefVec {
