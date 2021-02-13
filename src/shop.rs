@@ -1,4 +1,4 @@
-use std::{ffi::CStr, ffi::CString, os::raw::c_char};
+use std::{ffi::CStr, ffi::CString, os::raw::c_char, slice};
 
 use anyhow::Result;
 use chrono::NaiveDateTime;
@@ -21,6 +21,10 @@ pub struct Shop {
     pub name: String,
     pub owner_id: Option<i32>,
     pub description: Option<String>,
+    pub gold: Option<i32>,
+    pub shop_type: Option<String>,
+    pub vendor_keywords: Option<Vec<String>>,
+    pub vendor_keywords_exclude: Option<bool>,
 }
 
 impl Shop {
@@ -29,6 +33,10 @@ impl Shop {
             name: name.to_string(),
             owner_id: None,
             description: Some(description.to_string()),
+            gold: None,
+            shop_type: None,
+            vendor_keywords: None,
+            vendor_keywords_exclude: None,
         }
     }
 }
@@ -39,6 +47,10 @@ pub struct SavedShop {
     pub name: String,
     pub owner_id: i32,
     pub description: Option<String>,
+    pub gold: i32,
+    pub shop_type: String,
+    pub vendor_keywords: Vec<String>,
+    pub vendor_keywords_exclude: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
@@ -49,16 +61,32 @@ pub struct RawShop {
     pub id: i32,
     pub name: *const c_char,
     pub description: *const c_char,
+    pub gold: i32,
+    pub shop_type: *const c_char,
+    pub vendor_keywords: *mut *const c_char,
+    pub vendor_keywords_len: usize,
+    pub vendor_keywords_exclude: bool,
 }
 
 impl From<SavedShop> for RawShop {
     fn from(shop: SavedShop) -> Self {
+        let (keywords_ptr, keywords_len, _) = shop
+            .vendor_keywords
+            .into_iter()
+            .map(|keyword| CString::new(keyword).unwrap_or_default().into_raw() as *const c_char)
+            .collect::<Vec<*const c_char>>()
+            .into_raw_parts();
         Self {
             id: shop.id,
             name: CString::new(shop.name).unwrap_or_default().into_raw(),
             description: CString::new(shop.description.unwrap_or_else(|| "".to_string()))
                 .unwrap_or_default()
                 .into_raw(),
+            gold: shop.gold,
+            shop_type: CString::new(shop.shop_type).unwrap_or_default().into_raw(),
+            vendor_keywords: keywords_ptr,
+            vendor_keywords_len: keywords_len,
+            vendor_keywords_exclude: shop.vendor_keywords_exclude,
         }
     }
 }
@@ -143,30 +171,65 @@ pub extern "C" fn update_shop(
     id: u32,
     name: *const c_char,
     description: *const c_char,
+    gold: i32,
+    shop_type: *const c_char,
+    vendor_keywords: *mut *const c_char,
+    vendor_keywords_len: usize,
+    vendor_keywords_exclude: bool,
 ) -> FFIResult<RawShop> {
     info!("update_shop begin");
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     let api_key = unsafe { CStr::from_ptr(api_key) }.to_string_lossy();
-    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy();
-    let description = unsafe { CStr::from_ptr(description) }.to_string_lossy();
+    let name = unsafe { CStr::from_ptr(name) }
+        .to_string_lossy()
+        .to_string();
+    let description = unsafe { CStr::from_ptr(description) }
+        .to_string_lossy()
+        .to_string();
+    let shop_type = unsafe { CStr::from_ptr(shop_type) }
+        .to_string_lossy()
+        .to_string();
+    let keywords = match vendor_keywords.is_null() {
+        true => vec![],
+        false => unsafe { slice::from_raw_parts(vendor_keywords, vendor_keywords_len) }
+            .iter()
+            .map(|&keyword| {
+                unsafe { CStr::from_ptr(keyword) }
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect(),
+    };
     info!(
-        "update_shop api_url: {:?}, api_key: {:?}, name: {:?}, description: {:?}",
-        api_url, api_key, name, description
+        "update_shop api_url: {:?}, api_key: {:?}, name: {:?}, description: {:?}, gold: {:?}, shop_type: {:?}, keywords: {:?}, keywords_exclude: {:?}",
+        api_url, api_key, name, description, gold, shop_type, keywords, vendor_keywords_exclude
     );
 
     fn inner(
         api_url: &str,
         api_key: &str,
         id: u32,
-        name: &str,
-        description: &str,
+        name: String,
+        description: String,
+        gold: i32,
+        shop_type: String,
+        vendor_keywords: Vec<String>,
+        vendor_keywords_exclude: bool,
     ) -> Result<SavedShop> {
         #[cfg(not(test))]
         let url = Url::parse(api_url)?.join(&format!("v1/shops/{}", id))?;
         #[cfg(test)]
         let url = Url::parse(&mockito::server_url())?.join(&format!("v1/shops/{}", id))?;
 
-        let shop = Shop::from_game(name, description);
+        let shop = Shop {
+            name,
+            owner_id: None,
+            description: Some(description),
+            gold: Some(gold),
+            shop_type: Some(shop_type),
+            vendor_keywords: Some(vendor_keywords),
+            vendor_keywords_exclude: Some(vendor_keywords_exclude),
+        };
         info!("created shop from game: {:?}", &shop);
         let client = reqwest::blocking::Client::new();
         let resp = client
@@ -192,7 +255,17 @@ pub extern "C" fn update_shop(
         }
     }
 
-    match inner(&api_url, &api_key, id, &name, &description) {
+    match inner(
+        &api_url,
+        &api_key,
+        id,
+        name,
+        description,
+        gold,
+        shop_type,
+        keywords,
+        vendor_keywords_exclude,
+    ) {
         Ok(shop) => {
             info!("update_shop successful");
             FFIResult::Ok(RawShop::from(shop))
@@ -370,6 +443,10 @@ mod tests {
             owner_id: 1,
             name: "name".to_string(),
             description: Some("description".to_string()),
+            gold: 100,
+            shop_type: "general_store".to_string(),
+            vendor_keywords: vec!["VendorNoSale".to_string()],
+            vendor_keywords_exclude: true,
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         };
@@ -396,6 +473,22 @@ mod tests {
                     unsafe { CStr::from_ptr(raw_shop.description).to_string_lossy() },
                     "description"
                 );
+                assert_eq!(raw_shop.gold, 100);
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_shop.shop_type).to_string_lossy() },
+                    "general_store"
+                );
+                assert!(!raw_shop.vendor_keywords.is_null());
+                let keywords_slice = unsafe {
+                    slice::from_raw_parts(raw_shop.vendor_keywords, raw_shop.vendor_keywords_len)
+                };
+                assert_eq!(
+                    unsafe { CStr::from_ptr(keywords_slice[0]) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "VendorNoSale".to_string(),
+                );
+                assert_eq!(raw_shop.vendor_keywords_exclude, true);
             }
             FFIResult::Err(error) => panic!("create_shop returned error: {:?}", unsafe {
                 CStr::from_ptr(error).to_string_lossy()
@@ -434,6 +527,10 @@ mod tests {
             owner_id: 1,
             name: "name".to_string(),
             description: Some("description".to_string()),
+            gold: 100,
+            shop_type: "general_store".to_string(),
+            vendor_keywords: vec!["VendorNoSale".to_string()],
+            vendor_keywords_exclude: true,
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         };
@@ -447,7 +544,22 @@ mod tests {
         let api_key = CString::new("api-key").unwrap().into_raw();
         let name = CString::new("name").unwrap().into_raw();
         let description = CString::new("description").unwrap().into_raw();
-        let result = update_shop(api_url, api_key, 1, name, description);
+        let shop_type = CString::new("general_store").unwrap().into_raw();
+        let (keywords_ptr, keywords_len, _) =
+            vec![CString::new("VendorNoSale").unwrap().into_raw() as *const c_char]
+                .into_raw_parts();
+        let result = update_shop(
+            api_url,
+            api_key,
+            1,
+            name,
+            description,
+            100,
+            shop_type,
+            keywords_ptr,
+            keywords_len,
+            true,
+        );
         mock.assert();
         match result {
             FFIResult::Ok(raw_shop) => {
@@ -460,6 +572,22 @@ mod tests {
                     unsafe { CStr::from_ptr(raw_shop.description).to_string_lossy() },
                     "description"
                 );
+                assert_eq!(raw_shop.gold, 100);
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_shop.shop_type).to_string_lossy() },
+                    "general_store"
+                );
+                assert!(!raw_shop.vendor_keywords.is_null());
+                let keywords_slice = unsafe {
+                    slice::from_raw_parts(raw_shop.vendor_keywords, raw_shop.vendor_keywords_len)
+                };
+                assert_eq!(
+                    unsafe { CStr::from_ptr(keywords_slice[0]) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "VendorNoSale".to_string(),
+                );
+                assert_eq!(raw_shop.vendor_keywords_exclude, true);
             }
             FFIResult::Err(error) => panic!("update_shop returned error: {:?}", unsafe {
                 CStr::from_ptr(error).to_string_lossy()
@@ -478,7 +606,22 @@ mod tests {
         let api_key = CString::new("api-key").unwrap().into_raw();
         let name = CString::new("name").unwrap().into_raw();
         let description = CString::new("description").unwrap().into_raw();
-        let result = update_shop(api_url, api_key, 1, name, description);
+        let shop_type = CString::new("general_store").unwrap().into_raw();
+        let (keywords_ptr, keywords_len, _) =
+            vec![CString::new("VendorNoSale").unwrap().into_raw() as *const c_char]
+                .into_raw_parts();
+        let result = update_shop(
+            api_url,
+            api_key,
+            1,
+            name,
+            description,
+            100,
+            shop_type,
+            keywords_ptr,
+            keywords_len,
+            true,
+        );
         mock.assert();
         match result {
             FFIResult::Ok(raw_shop) => panic!("update_shop returned Ok result: {:#x?}", raw_shop),
@@ -498,6 +641,10 @@ mod tests {
             owner_id: 1,
             name: "name".to_string(),
             description: Some("description".to_string()),
+            gold: 100,
+            shop_type: "general_store".to_string(),
+            vendor_keywords: vec!["VendorNoSale".to_string()],
+            vendor_keywords_exclude: true,
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         };
@@ -522,6 +669,22 @@ mod tests {
                     unsafe { CStr::from_ptr(raw_shop.description).to_string_lossy() },
                     "description"
                 );
+                assert_eq!(raw_shop.gold, 100);
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_shop.shop_type).to_string_lossy() },
+                    "general_store"
+                );
+                assert!(!raw_shop.vendor_keywords.is_null());
+                let keywords_slice = unsafe {
+                    slice::from_raw_parts(raw_shop.vendor_keywords, raw_shop.vendor_keywords_len)
+                };
+                assert_eq!(
+                    unsafe { CStr::from_ptr(keywords_slice[0]) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "VendorNoSale".to_string(),
+                );
+                assert_eq!(raw_shop.vendor_keywords_exclude, true);
             }
             FFIResult::Err(error) => panic!("get_shop returned error: {:?}", unsafe {
                 CStr::from_ptr(error).to_string_lossy()
@@ -558,6 +721,10 @@ mod tests {
             owner_id: 1,
             name: "name".to_string(),
             description: Some("description".to_string()),
+            gold: 100,
+            shop_type: "general_store".to_string(),
+            vendor_keywords: vec!["VendorNoSale".to_string()],
+            vendor_keywords_exclude: true,
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
         }];
@@ -587,6 +754,22 @@ mod tests {
                     unsafe { CStr::from_ptr(raw_shop.description).to_string_lossy() },
                     "description"
                 );
+                assert_eq!(raw_shop.gold, 100);
+                assert_eq!(
+                    unsafe { CStr::from_ptr(raw_shop.shop_type).to_string_lossy() },
+                    "general_store"
+                );
+                assert!(!raw_shop.vendor_keywords.is_null());
+                let keywords_slice = unsafe {
+                    slice::from_raw_parts(raw_shop.vendor_keywords, raw_shop.vendor_keywords_len)
+                };
+                assert_eq!(
+                    unsafe { CStr::from_ptr(keywords_slice[0]) }
+                        .to_string_lossy()
+                        .to_string(),
+                    "VendorNoSale".to_string(),
+                );
+                assert_eq!(raw_shop.vendor_keywords_exclude, true);
             }
             FFIResult::Err(error) => panic!("list_shops returned error: {:?}", unsafe {
                 CStr::from_ptr(error).to_string_lossy()

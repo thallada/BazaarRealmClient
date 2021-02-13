@@ -118,6 +118,11 @@ struct RawShop {
   int32_t id;
   const char *name;
   const char *description;
+  int32_t gold;
+  const char *shop_type;
+  const char **vendor_keywords;
+  uintptr_t vendor_keywords_len;
+  bool vendor_keywords_exclude;
 };
 
 struct RawTransaction {
@@ -258,6 +263,11 @@ FFIResult<RawShop> update_shop(const char *api_url,
                                const char *api_key,
                                uint32_t id,
                                const char *name,
-                               const char *description);
+                               const char *description,
+                               int32_t gold,
+                               const char *shop_type,
+                               const char **vendor_keywords,
+                               uintptr_t vendor_keywords_len,
+                               bool vendor_keywords_exclude);
 
 } // extern "C"
