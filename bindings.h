@@ -5,6 +5,65 @@
 #include <cassert>
 
 
+struct FFIServerError {
+  uint16_t status;
+  const char *title;
+  const char *detail;
+};
+
+struct FFIError {
+  enum class Tag : uint8_t {
+    Server,
+    Network,
+  };
+
+  struct Server_Body {
+    FFIServerError _0;
+  };
+
+  struct Network_Body {
+    const char *_0;
+  };
+
+  Tag tag;
+  union {
+    Server_Body server;
+    Network_Body network;
+  };
+
+  static FFIError Server(const FFIServerError &_0) {
+    FFIError result;
+    ::new (&result.server._0) (FFIServerError)(_0);
+    result.tag = Tag::Server;
+    return result;
+  }
+
+  bool IsServer() const {
+    return tag == Tag::Server;
+  }
+
+  const FFIServerError& AsServer() const {
+    assert(IsServer());
+    return server._0;
+  }
+
+  static FFIError Network(const char *const &_0) {
+    FFIError result;
+    ::new (&result.network._0) (const char*)(_0);
+    result.tag = Tag::Network;
+    return result;
+  }
+
+  bool IsNetwork() const {
+    return tag == Tag::Network;
+  }
+
+  const char*const & AsNetwork() const {
+    assert(IsNetwork());
+    return network._0;
+  }
+};
+
 template<typename T>
 struct FFIResult {
   enum class Tag : uint8_t {
@@ -17,7 +76,7 @@ struct FFIResult {
   };
 
   struct Err_Body {
-    const char *_0;
+    FFIError _0;
   };
 
   Tag tag;
@@ -42,9 +101,9 @@ struct FFIResult {
     return ok._0;
   }
 
-  static FFIResult Err(const char *const &_0) {
+  static FFIResult Err(const FFIError &_0) {
     FFIResult result;
-    ::new (&result.err._0) (const char*)(_0);
+    ::new (&result.err._0) (FFIError)(_0);
     result.tag = Tag::Err;
     return result;
   }
@@ -53,7 +112,7 @@ struct FFIResult {
     return tag == Tag::Err;
   }
 
-  const char*const & AsErr() const {
+  const FFIError& AsErr() const {
     assert(IsErr());
     return err._0;
   }

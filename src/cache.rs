@@ -83,29 +83,43 @@ pub fn update_file_caches(
 
 pub fn from_file_cache<T: for<'de> Deserialize<'de>>(cache_path: &Path) -> Result<T> {
     #[cfg(not(test))]
-    let file = File::open(cache_path).context(format!(
-        "Object not found in API or in cache: {}",
-        cache_path.file_name().unwrap_or_default().to_string_lossy()
-    ))?;
+    let file = File::open(cache_path).with_context(|| {
+        format!(
+            "Object not found in API or in cache: {}",
+            cache_path.file_name().unwrap_or_default().to_string_lossy()
+        )
+    })?;
     #[cfg(test)]
     let file = tempfile()?; // cache always reads from an empty temp file in cfg(test)
 
     let reader = BufReader::new(file);
     info!("returning value from cache: {:?}", cache_path);
-    Ok(bincode::deserialize_from(reader)?)
+    Ok(bincode::deserialize_from(reader).with_context(|| {
+        format!(
+            "Object not found in API or in cache: {}",
+            cache_path.file_name().unwrap_or_default().to_string_lossy(),
+        )
+    })?)
 }
 
 pub fn load_metadata_from_file_cache(cache_path: &Path) -> Result<Metadata> {
     #[cfg(not(test))]
-    let file = File::open(cache_path).context(format!(
-        "Object not found in API or in cache: {}",
-        cache_path.file_name().unwrap_or_default().to_string_lossy()
-    ))?;
+    let file = File::open(cache_path).with_context(|| {
+        format!(
+            "Object not found in API or in cache: {}",
+            cache_path.file_name().unwrap_or_default().to_string_lossy()
+        )
+    })?;
     #[cfg(test)]
     let file = tempfile()?; // cache always reads from an empty temp file in cfg(test)
 
     let reader = BufReader::new(file);
     info!("returning value from cache: {:?}", cache_path);
-    let metadata: Metadata = serde_json::from_reader(reader)?;
+    let metadata: Metadata = serde_json::from_reader(reader).with_context(|| {
+        format!(
+            "Object not found in API or in cache: {}",
+            cache_path.file_name().unwrap_or_default().to_string_lossy(),
+        )
+    })?;
     Ok(metadata)
 }

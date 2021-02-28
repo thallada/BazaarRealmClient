@@ -10,7 +10,11 @@ use log::{error, info};
 #[cfg(test)]
 use std::{println as info, println as error};
 
-use crate::{log_server_error, result::FFIResult};
+use crate::{
+    error::extract_error_from_response,
+    log_server_error,
+    result::{FFIError, FFIResult},
+};
 
 #[no_mangle]
 pub extern "C" fn init() -> bool {
@@ -33,34 +37,30 @@ pub extern "C" fn status_check(api_url: *const c_char) -> FFIResult<bool> {
     let api_url = unsafe { CStr::from_ptr(api_url) }.to_string_lossy();
     info!("status_check api_url: {:?}", api_url);
 
-    fn inner(api_url: &str) -> Result<Response> {
+    fn inner(api_url: &str) -> Result<()> {
         #[cfg(not(test))]
         let api_url = Url::parse(api_url)?.join("v1/status")?;
         #[cfg(test)]
         let api_url = Url::parse(&mockito::server_url())?.join("v1/status")?;
 
-        Ok(reqwest::blocking::get(api_url)?)
+        let resp = reqwest::blocking::get(api_url)?;
+        let status = resp.status();
+        let bytes = resp.bytes()?;
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(extract_error_from_response(status, &bytes))
+        }
     }
 
     match inner(&api_url) {
-        Ok(resp) if resp.status() == 200 => {
+        Ok(()) => {
             info!("status_check ok");
             FFIResult::Ok(true)
         }
-        Ok(resp) => {
-            error!("status_check failed. Server error");
-            log_server_error(resp);
-            let err_string = CString::new("API returned a non-200 status code".to_string())
-                .expect("could not create CString")
-                .into_raw();
-            FFIResult::Err(err_string)
-        }
         Err(err) => {
             error!("status_check failed. {}", err);
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -91,9 +91,17 @@ mod tests {
             FFIResult::Ok(success) => {
                 assert_eq!(success, true);
             }
-            FFIResult::Err(error) => panic!("status_check returned error: {:?}", unsafe {
-                CStr::from_ptr(error).to_string_lossy()
-            }),
+            FFIResult::Err(error) => panic!(
+                "status_check returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -109,12 +117,16 @@ mod tests {
         mock.assert();
         match result {
             FFIResult::Ok(success) => panic!("status_check returned Ok result: {:?}", success),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "API returned a non-200 status code"
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Server(server_error) => {
+                    assert_eq!(server_error.status, 500);
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(server_error.title).to_string_lossy() },
+                        "Internal Server Error"
+                    );
+                }
+                _ => panic!("status_check did not return a server error"),
+            },
         }
     }
 }

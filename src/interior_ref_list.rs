@@ -11,9 +11,13 @@ use log::{error, info};
 use std::{println as info, println as error};
 
 use crate::{
-    cache::file_cache_dir, cache::from_file_cache, cache::load_metadata_from_file_cache,
-    cache::update_file_caches, error::extract_error_from_response, log_server_error,
-    result::FFIResult,
+    cache::file_cache_dir,
+    cache::from_file_cache,
+    cache::load_metadata_from_file_cache,
+    cache::update_file_caches,
+    error::extract_error_from_response,
+    log_server_error,
+    result::{FFIError, FFIResult},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -334,11 +338,7 @@ pub extern "C" fn create_interior_ref_list(
         Ok(interior_ref_list) => FFIResult::Ok(interior_ref_list.id),
         Err(err) => {
             error!("create_interior_ref_list failed. {}", err);
-            // TODO: also need to drop this CString once C++ is done reading it
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -419,11 +419,7 @@ pub extern "C" fn update_interior_ref_list(
         Ok(interior_ref_list) => FFIResult::Ok(interior_ref_list.id),
         Err(err) => {
             error!("update_interior_ref_list failed. {}", err);
-            // TODO: also need to drop this CString once C++ is done reading it
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -526,13 +522,8 @@ pub extern "C" fn get_interior_ref_list(
             })
         }
         Err(err) => {
-            error!("interior_ref_list failed. {}", err);
-            // TODO: how to do error handling?
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            // TODO: also need to drop this CString once C++ is done reading it
-            FFIResult::Err(err_string)
+            error!("get_interior_ref_list failed. {}", err);
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -633,12 +624,7 @@ pub extern "C" fn get_interior_ref_list_by_shop_id(
         }
         Err(err) => {
             error!("get_interior_ref_list_by_shop_id failed. {}", err);
-            // TODO: how to do error handling?
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            // TODO: also need to drop this CString once C++ is done reading it
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -742,11 +728,17 @@ mod tests {
             FFIResult::Ok(interior_ref_list_id) => {
                 assert_eq!(interior_ref_list_id, 1);
             }
-            FFIResult::Err(error) => {
-                panic!("create_interior_ref_list returned error: {:?}", unsafe {
-                    CStr::from_ptr(error).to_string_lossy()
-                })
-            }
+            FFIResult::Err(error) => panic!(
+                "create_interior_ref_list returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -805,12 +797,16 @@ mod tests {
                 "create_interior_ref_list returned Ok result: {:?}",
                 interior_ref_list_id
             ),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "Server 500: Internal Server Error"
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Server(server_error) => {
+                    assert_eq!(server_error.status, 500);
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(server_error.title).to_string_lossy() },
+                        "Internal Server Error"
+                    );
+                }
+                _ => panic!("create_interior_ref_list did not return a server error"),
+            },
         }
     }
 
@@ -905,11 +901,17 @@ mod tests {
             FFIResult::Ok(interior_ref_list_id) => {
                 assert_eq!(interior_ref_list_id, 1);
             }
-            FFIResult::Err(error) => {
-                panic!("update_interior_ref_list returned error: {:?}", unsafe {
-                    CStr::from_ptr(error).to_string_lossy()
-                })
-            }
+            FFIResult::Err(error) => panic!(
+                "update_interior_ref_list returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -968,12 +970,16 @@ mod tests {
                 "update_interior_ref_list returned Ok result: {:?}",
                 interior_ref_list_id
             ),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "Server 500: Internal Server Error"
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Server(server_error) => {
+                    assert_eq!(server_error.status, 500);
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(server_error.title).to_string_lossy() },
+                        "Internal Server Error"
+                    );
+                }
+                _ => panic!("update_interior_ref_list did not return a server error"),
+            },
         }
     }
 
@@ -1080,9 +1086,17 @@ mod tests {
                 assert_eq!(raw_shelf.sort_on, std::ptr::null());
                 assert_eq!(raw_shelf.sort_asc, true);
             }
-            FFIResult::Err(error) => panic!("get_interior_ref_list returned error: {:?}", unsafe {
-                CStr::from_ptr(error).to_string_lossy()
-            }),
+            FFIResult::Err(error) => panic!(
+                "get_interior_ref_list returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -1102,12 +1116,15 @@ mod tests {
                 "get_interior_ref_list returned Ok result: {:#x?}",
                 raw_interior_ref_vec
             ),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "io error: failed to fill whole buffer" // empty tempfile
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Network(network_error) => {
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() },
+                        "Object not found in API or in cache: interior_ref_list_1.bin",
+                    );
+                }
+                _ => panic!("get_interior_ref_list did not return a network error"),
+            },
         }
     }
 
@@ -1216,7 +1233,14 @@ mod tests {
             }
             FFIResult::Err(error) => panic!(
                 "get_interior_ref_list_by_shop_id returned error: {:?}",
-                unsafe { CStr::from_ptr(error).to_string_lossy() }
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
             ),
         }
     }
@@ -1237,12 +1261,15 @@ mod tests {
                 "get_interior_ref_list_by_shop_id returned Ok result: {:#x?}",
                 raw_interior_ref_vec
             ),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "io error: failed to fill whole buffer" // empty tempfile
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Network(network_error) => {
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() },
+                        "Object not found in API or in cache: shop_1_interior_ref_list.bin",
+                    );
+                }
+                _ => panic!("get_interior_ref_list_by_shop_id did not return a network error"),
+            },
         }
     }
 }

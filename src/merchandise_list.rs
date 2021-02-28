@@ -13,7 +13,7 @@ use std::{println as info, println as error};
 use crate::{
     cache::file_cache_dir, cache::from_file_cache, cache::load_metadata_from_file_cache,
     cache::update_file_caches, error::extract_error_from_response, log_server_error,
-    result::FFIResult,
+    result::{FFIError, FFIResult},
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -207,12 +207,7 @@ pub extern "C" fn create_merchandise_list(
         }
         Err(err) => {
             error!("create_merchandise_list failed. {}", err);
-            // TODO: how to do error handling?
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            // TODO: also need to drop this CString once C++ is done reading it
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -312,12 +307,7 @@ pub extern "C" fn update_merchandise_list(
         }
         Err(err) => {
             error!("update_merchandise_list failed. {}", err);
-            // TODO: how to do error handling?
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            // TODO: also need to drop this CString once C++ is done reading it
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -428,13 +418,8 @@ pub extern "C" fn get_merchandise_list(
             FFIResult::Ok(RawMerchandiseVec { ptr, len, cap })
         }
         Err(err) => {
-            error!("merchandise_list failed. {}", err);
-            // TODO: how to do error handling?
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            // TODO: also need to drop this CString once C++ is done reading it
-            FFIResult::Err(err_string)
+            error!("get_merchandise_list failed. {}", err);
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -539,12 +524,7 @@ pub extern "C" fn get_merchandise_list_by_shop_id(
         }
         Err(err) => {
             error!("get_merchandise_list_by_shop_id failed. {}", err);
-            // TODO: how to do error handling?
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            // TODO: also need to drop this CString once C++ is done reading it
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -627,11 +607,17 @@ mod tests {
                 assert_eq!(raw_merchandise.is_food, false);
                 assert_eq!(raw_merchandise.price, 100);
             }
-            FFIResult::Err(error) => {
-                panic!("create_merchandise_list returned error: {:?}", unsafe {
-                    CStr::from_ptr(error).to_string_lossy()
-                })
-            }
+            FFIResult::Err(error) => panic!(
+                "create_merchandise_list returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -666,12 +652,16 @@ mod tests {
                 "create_merchandise_list returned Ok result: {:#x?}",
                 raw_merchandise_vec
             ),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "Server 500: Internal Server Error"
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Server(server_error) => {
+                    assert_eq!(server_error.status, 500);
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(server_error.title).to_string_lossy() },
+                        "Internal Server Error"
+                    );
+                }
+                _ => panic!("create_merchandise_list did not return a server error"),
+            },
         }
     }
 
@@ -745,11 +735,17 @@ mod tests {
                 assert_eq!(raw_merchandise.is_food, false);
                 assert_eq!(raw_merchandise.price, 100);
             }
-            FFIResult::Err(error) => {
-                panic!("update_merchandise_list returned error: {:?}", unsafe {
-                    CStr::from_ptr(error).to_string_lossy()
-                })
-            }
+            FFIResult::Err(error) => panic!(
+                "update_merchandise_list returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -784,12 +780,16 @@ mod tests {
                 "update_merchandise_list returned Ok result: {:#x?}",
                 raw_merchandise_vec
             ),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "Server 500: Internal Server Error"
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Server(server_error) => {
+                    assert_eq!(server_error.status, 500);
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(server_error.title).to_string_lossy() },
+                        "Internal Server Error"
+                    );
+                }
+                _ => panic!("update_merchandise_list did not return a server error"),
+            },
         }
     }
     #[test]
@@ -857,9 +857,17 @@ mod tests {
                     "VendorItemWeapon".to_string(),
                 );
             }
-            FFIResult::Err(error) => panic!("get_merchandise_list returned error: {:?}", unsafe {
-                CStr::from_ptr(error).to_string_lossy()
-            }),
+            FFIResult::Err(error) => panic!(
+                "get_merchandise_list returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -879,12 +887,15 @@ mod tests {
                 "get_merchandise_list returned Ok result: {:#x?}",
                 raw_merchandise_vec
             ),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "io error: failed to fill whole buffer" // empty tempfile
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Network(network_error) => {
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() },
+                        "Object not found in API or in cache: merchandise_list_1.bin",
+                    );
+                }
+                _ => panic!("get_merchandise_list did not return a network error"),
+            },
         }
     }
 
@@ -955,7 +966,14 @@ mod tests {
             }
             FFIResult::Err(error) => panic!(
                 "get_merchandise_list_by_shop_id returned error: {:?}",
-                unsafe { CStr::from_ptr(error).to_string_lossy() }
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
             ),
         }
     }
@@ -976,12 +994,15 @@ mod tests {
                 "get_merchandise_list_by_shop_id returned Ok result: {:#x?}",
                 raw_merchandise_vec
             ),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "io error: failed to fill whole buffer" // empty tempfile
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Network(network_error) => {
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() },
+                        "Object not found in API or in cache: shop_1_merchandise_list.bin",
+                    );
+                }
+                _ => panic!("get_merchandise_list_by_shop_id did not return a network error"),
+            },
         }
     }
 }

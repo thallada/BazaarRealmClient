@@ -11,9 +11,13 @@ use log::{error, info};
 use std::{println as info, println as error};
 
 use crate::{
-    cache::file_cache_dir, cache::from_file_cache, cache::load_metadata_from_file_cache,
-    cache::update_file_caches, error::extract_error_from_response, log_server_error,
-    result::FFIResult,
+    cache::file_cache_dir,
+    cache::from_file_cache,
+    cache::load_metadata_from_file_cache,
+    cache::update_file_caches,
+    error::extract_error_from_response,
+    log_server_error,
+    result::{FFIError, FFIResult},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -155,11 +159,7 @@ pub extern "C" fn create_shop(
         }
         Err(err) => {
             error!("create_shop failed. {}", err);
-            // TODO: also need to drop this CString once C++ is done reading it
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -272,11 +272,7 @@ pub extern "C" fn update_shop(
         }
         Err(err) => {
             error!("update_shop failed. {}", err);
-            // TODO: also need to drop this CString once C++ is done reading it
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -346,12 +342,8 @@ pub extern "C" fn get_shop(
             FFIResult::Ok(RawShop::from(shop))
         }
         Err(err) => {
-            error!("get_shop_list failed. {}", err);
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            // TODO: also need to drop this CString once C++ is done reading it
-            FFIResult::Err(err_string)
+            error!("get_shop failed. {}", err);
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -419,11 +411,7 @@ pub extern "C" fn list_shops(
         }
         Err(err) => {
             error!("list_shops failed. {}", err);
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            // TODO: also need to drop this CString once C++ is done reading it
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -490,9 +478,17 @@ mod tests {
                 );
                 assert_eq!(raw_shop.vendor_keywords_exclude, true);
             }
-            FFIResult::Err(error) => panic!("create_shop returned error: {:?}", unsafe {
-                CStr::from_ptr(error).to_string_lossy()
-            }),
+            FFIResult::Err(error) => panic!(
+                "create_shop returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -511,12 +507,16 @@ mod tests {
         mock.assert();
         match result {
             FFIResult::Ok(raw_shop) => panic!("create_shop returned Ok result: {:#x?}", raw_shop),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "Server 500: Internal Server Error"
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Server(server_error) => {
+                    assert_eq!(server_error.status, 500);
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(server_error.title).to_string_lossy() },
+                        "Internal Server Error"
+                    );
+                }
+                _ => panic!("create_shop did not return a server error"),
+            },
         }
     }
 
@@ -589,9 +589,17 @@ mod tests {
                 );
                 assert_eq!(raw_shop.vendor_keywords_exclude, true);
             }
-            FFIResult::Err(error) => panic!("update_shop returned error: {:?}", unsafe {
-                CStr::from_ptr(error).to_string_lossy()
-            }),
+            FFIResult::Err(error) => panic!(
+                "update_shop returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -625,12 +633,16 @@ mod tests {
         mock.assert();
         match result {
             FFIResult::Ok(raw_shop) => panic!("update_shop returned Ok result: {:#x?}", raw_shop),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "Server 500: Internal Server Error"
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Server(server_error) => {
+                    assert_eq!(server_error.status, 500);
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(server_error.title).to_string_lossy() },
+                        "Internal Server Error"
+                    );
+                }
+                _ => panic!("update_shop did not return a server error"),
+            },
         }
     }
 
@@ -686,9 +698,17 @@ mod tests {
                 );
                 assert_eq!(raw_shop.vendor_keywords_exclude, true);
             }
-            FFIResult::Err(error) => panic!("get_shop returned error: {:?}", unsafe {
-                CStr::from_ptr(error).to_string_lossy()
-            }),
+            FFIResult::Err(error) => panic!(
+                "get_shop returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -705,12 +725,15 @@ mod tests {
         mock.assert();
         match result {
             FFIResult::Ok(raw_shop) => panic!("get_shop returned Ok result: {:#x?}", raw_shop),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "io error: failed to fill whole buffer" // empty tempfile
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Network(network_error) => {
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() },
+                        "Object not found in API or in cache: shop_1.bin",
+                    );
+                }
+                _ => panic!("get_shop did not return a network error"),
+            },
         }
     }
 
@@ -771,9 +794,17 @@ mod tests {
                 );
                 assert_eq!(raw_shop.vendor_keywords_exclude, true);
             }
-            FFIResult::Err(error) => panic!("list_shops returned error: {:?}", unsafe {
-                CStr::from_ptr(error).to_string_lossy()
-            }),
+            FFIResult::Err(error) => panic!(
+                "list_shops returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -790,12 +821,15 @@ mod tests {
         mock.assert();
         match result {
             FFIResult::Ok(raw_shop) => panic!("list_shops returned Ok result: {:#x?}", raw_shop),
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "io error: failed to fill whole buffer" // empty tempfile
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Network(network_error) => {
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() },
+                        "Object not found in API or in cache: shops.bin",
+                    );
+                }
+                _ => panic!("list_shops did not return a network error"),
+            },
         }
     }
 }

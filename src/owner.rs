@@ -11,8 +11,10 @@ use log::{error, info};
 use std::{println as info, println as error};
 
 use crate::{
-    cache::file_cache_dir, cache::update_file_caches, error::extract_error_from_response,
-    result::FFIResult,
+    cache::file_cache_dir,
+    cache::update_file_caches,
+    error::extract_error_from_response,
+    result::{FFIError, FFIResult},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -112,11 +114,7 @@ pub extern "C" fn create_owner(
         }
         Err(err) => {
             error!("create_owner failed. {}", err);
-            // TODO: also need to drop this CString once C++ is done reading it
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -182,11 +180,7 @@ pub extern "C" fn update_owner(
         }
         Err(err) => {
             error!("update_owner failed. {}", err);
-            // TODO: also need to drop this CString once C++ is done reading it
-            let err_string = CString::new(err.to_string())
-                .expect("could not create CString")
-                .into_raw();
-            FFIResult::Err(err_string)
+            FFIResult::Err(FFIError::from(err))
         }
     }
 }
@@ -229,9 +223,17 @@ mod tests {
                 );
                 assert_eq!(raw_owner.mod_version, 1);
             }
-            FFIResult::Err(error) => panic!("create_owner returned error: {:?}", unsafe {
-                CStr::from_ptr(error).to_string_lossy()
-            }),
+            FFIResult::Err(error) => panic!(
+                "create_owner returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -252,12 +254,16 @@ mod tests {
             FFIResult::Ok(raw_owner) => {
                 panic!("create_owner returned Ok result: {:#x?}", raw_owner)
             }
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "Server 500: Internal Server Error"
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Server(server_error) => {
+                    assert_eq!(server_error.status, 500);
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(server_error.title).to_string_lossy() },
+                        "Internal Server Error"
+                    );
+                }
+                _ => panic!("create_owner did not return a server error"),
+            },
         }
     }
 
@@ -291,9 +297,17 @@ mod tests {
                 );
                 assert_eq!(raw_owner.mod_version, 1);
             }
-            FFIResult::Err(error) => panic!("update_owner returned error: {:?}", unsafe {
-                CStr::from_ptr(error).to_string_lossy()
-            }),
+            FFIResult::Err(error) => panic!(
+                "update_owner returned error: {:?}",
+                match error {
+                    FFIError::Server(server_error) =>
+                        format!("{} {}", server_error.status, unsafe {
+                            CStr::from_ptr(server_error.title).to_string_lossy()
+                        }),
+                    FFIError::Network(network_error) =>
+                        unsafe { CStr::from_ptr(network_error).to_string_lossy() }.to_string(),
+                }
+            ),
         }
     }
 
@@ -314,12 +328,16 @@ mod tests {
             FFIResult::Ok(raw_owner) => {
                 panic!("update_owner returned Ok result: {:#x?}", raw_owner)
             }
-            FFIResult::Err(error) => {
-                assert_eq!(
-                    unsafe { CStr::from_ptr(error).to_string_lossy() },
-                    "Server 500: Internal Server Error"
-                );
-            }
+            FFIResult::Err(error) => match error {
+                FFIError::Server(server_error) => {
+                    assert_eq!(server_error.status, 500);
+                    assert_eq!(
+                        unsafe { CStr::from_ptr(server_error.title).to_string_lossy() },
+                        "Internal Server Error"
+                    );
+                }
+                _ => panic!("update_owner did not return a server error"),
+            },
         }
     }
 }
